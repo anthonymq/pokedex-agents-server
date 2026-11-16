@@ -4,7 +4,7 @@
 // a seeded random source; no save is touched.
 //   bun scripts/simulate.js                 the three personas, 365 days
 //   bun scripts/simulate.js --days 90 --seed 7 --json
-//   bun scripts/simulate.js --check         exit 1 when the repo-neutrality check fails
+//   bun scripts/simulate.js --check         exit 1 when a shipped phase's target is missed
 // Also importable: simulate(persona, options) and neutrality(persona, options).
 
 // --- An in-memory stand-in for the `herdr` module, so game.js runs without a save file.
@@ -47,14 +47,14 @@ Math.random = rand;
 
 const G = await import("../src/game.js");
 
-// The roadmap's personas. `attend`: chance they're looking when a wild Pokemon appears (it waits
-// ENCOUNTER_MS). `turnMin`: median turn length in minutes. `block`: share of turns where the agent
+// The roadmap's personas. `checks`: how many times a day they open the tall grass and throw at
+// everything waiting (spread over the day; the last one at the end of it). `turnMin`: median turn length in minutes. `block`: share of turns where the agent
 // asks them something; `answerMin`: mean time to answer it.
 export const PERSONAS = {
-  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, attend: 0.3, turnMin: 3, block: 0.3, answerMin: 15 },
-  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, attend: 0.6, turnMin: 4, block: 0.3, answerMin: 4 },
+  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, checks: 1, turnMin: 3, block: 0.3, answerMin: 15 },
+  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, checks: 3, turnMin: 4, block: 0.3, answerMin: 4 },
   // 5-6 active days a week: weekdays, plus every other Saturday.
-  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, attend: 0.9, turnMin: 5, block: 0.3, answerMin: 6 },
+  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, checks: 4, turnMin: 5, block: 0.3, answerMin: 6 },
 };
 // Default partners, as the clients pick them: one base form per repo.
 const BASES = [1, 4, 7, 25, 133, 10, 16, 92, 63, 66, 74, 129, 147, 60, 81];
@@ -80,6 +80,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
   const partners = () => mem.state[G.PARTNERS] ?? {};
   const first = new RealDate(`${start}T00:00:00`);
   const out = { persona: p, days, milestones: {}, daily: [], snapshots: {} };
+  const appeared = new Set(), shown = new Set();
   const mark = (key, d) => { if (out.milestones[key] === undefined) out.milestones[key] = d; };
 
   for (let d = 1; d <= days; d++) {
@@ -93,23 +94,25 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
       const before = G.game();
       for (let t = 0; t < p.turns; t++) {
         const project = projects[t % projects.length];
-        // Opening an agent in a repo meets its partner (the free catch per space).
-        if (partners()[project] === undefined) {
-          const base = BASES[projects.indexOf(project) % BASES.length];
-          G.recordCatches([base], project);
-          mem.state[G.PARTNERS] = { ...partners(), [project]: base };
-        }
+        // A repo's default partner, as the clients save it (no catch).
+        if (partners()[project] === undefined) mem.state[G.PARTNERS] = { ...partners(), [project]: G.defaultPartner(BASES[projects.indexOf(project) % BASES.length]) };
         const ms = turnMs(p.turnMin);
         if (rand() < p.block) G.unblocked(project, exp(p.answerMin) * 60000);
         G.finishTask(project, partners()[project], ms, apps[t % apps.length]);
-        // A wild Pokemon: thrown at right away when they're looking, else it flees later.
-        const e = G.game().encounter;
-        if (e && e.at === clock && e.weak === 0) {
-          today.interruptions++;
-          if (rand() < p.attend) {
-            let r;
-            do r = G.throwBall(e.balls > 0 && (G.game().encounter?.balls ?? 0) > 0 ? "poke" : (G.game().bag.great ?? 0) > 0 ? "great" : "ultra");
-            while (r === "missed");
+        // A new wild Pokemon interrupts only when the alert option allows it (agents are busy all day).
+        const fresh = G.game().wild.at(-1);
+        if (fresh && fresh.at === clock) {
+          appeared.add(`${fresh.at}:${fresh.id}`);
+          if (G.shouldAlert(p.agents)) today.interruptions++;
+        }
+        // Checking the tall grass: every waiting Pokemon gets balls until it's caught or gone.
+        if ((t + 1) % Math.ceil(p.turns / p.checks) === 0 || t === p.turns - 1) {
+          while (G.game().wild.length) {
+            const e = G.game().wild[0];
+            shown.add(`${e.at}:${e.id}`);
+            const g = G.game();
+            const r = G.throwBall(e.balls > 0 ? "poke" : (g.bag.great ?? 0) > 0 ? "great" : (g.bag.ultra ?? 0) > 0 ? "ultra" : "poke");
+            if (r === "empty") G.runAway();
           }
         }
         // Stones and Link Cables are used as soon as a partner can take one.
@@ -147,6 +150,8 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
   out.perActiveDay = {
     encounters: per("seen"), caught: per("caught"), fled: per("fled"), interruptions: per("interruptions"),
     questDays: active.filter((x) => x.quests > 0).length / Math.max(1, active.length),
+    // Share of wild Pokemon the person got to see before they left (vs fleeing unseen).
+    seenShare: appeared.size ? [...appeared].filter((k) => shown.has(k)).length / appeared.size : 1,
   };
   out.stats = G.localStats(g, new Date(clock));
   return out;
@@ -168,7 +173,17 @@ export function neutrality(persona = "pro", { repos = 10, days = 90, seed = 1, t
 const when = (d) => (d === undefined ? "never" : `day ${d} (${d <= 14 ? `week ${Math.ceil(d / 7)}` : `month ${Math.ceil(d / 30.4)}`})`);
 const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
-function report(runs, checks) {
+// Phase 1 targets: no forced interruption for anyone by default, the casual player sees >= 90%.
+export function phase1(runs) {
+  const by = Object.fromEntries(runs.map((r) => [r.name, r]));
+  const rows = [
+    ...runs.map((r) => ({ key: `${r.name} forced interruptions/day`, value: r.perActiveDay.interruptions, pass: r.perActiveDay.interruptions === 0 })),
+    { key: "casual encounters seen", value: by.casual.perActiveDay.seenShare, pass: by.casual.perActiveDay.seenShare >= 0.9 },
+  ];
+  return { rows, pass: rows.every((r) => r.pass) };
+}
+
+function report(runs, checks, targets) {
   const lines = [];
   for (const r of runs) {
     const p = r.persona;
@@ -180,6 +195,7 @@ function report(runs, checks) {
     lines.push(`  full Kanto Dex    ${when(r.milestones.fullDex)}`);
     lines.push(`  per active day    ${fmt(r.perActiveDay.encounters)} encounters, ${fmt(r.perActiveDay.caught)} caught, ${fmt(r.perActiveDay.fled)} fled, ${fmt(r.perActiveDay.interruptions)} forced interruptions`);
     lines.push(`  quest days        ${Math.round(r.perActiveDay.questDays * 100)}% of active days`);
+    lines.push(`  encounters seen   ${Math.round(r.perActiveDay.seenShare * 100)}% before they left`);
     lines.push(`  snapshots         ${Object.entries(r.snapshots).map(([d, s]) => `d${d}: TR${s.trainer} top Lv${s.topLevel} ${s.caught} caught ${s.badges} badges`).join(" | ")}`);
   }
   lines.push("\n== Repo neutrality (same turns, 1 repo vs many; +/-10%)");
@@ -187,6 +203,8 @@ function report(runs, checks) {
     lines.push(`  ${c.persona}, 1 vs ${c.repos} repos over ${c.days} days: ${c.pass ? "PASS" : "FAIL"}`);
     for (const r of c.rows) lines.push(`    ${r.key.padEnd(8)} ${String(r.one).padStart(7)} -> ${String(r.many).padStart(7)}  x${r.ratio.toFixed(2)} ${r.pass ? "ok" : "off"}`);
   }
+  lines.push(`\n== Phase 1 targets: ${targets.pass ? "PASS" : "FAIL"}`);
+  for (const r of targets.rows) lines.push(`    ${r.key.padEnd(34)} ${fmt(r.value)} ${r.pass ? "ok" : "off"}`);
   return lines.join("\n");
 }
 
@@ -196,7 +214,9 @@ if (import.meta.main) {
   const days = opt("--days", 365), seed = opt("--seed", 1);
   const runs = Object.keys(PERSONAS).map((name) => ({ name, ...simulate(name, { days, seed }) }));
   const checks = [neutrality("pro", { repos: 10, seed }), neutrality("regular", { repos: 2, seed })];
-  if (args.includes("--json")) console.log(JSON.stringify({ runs: runs.map(({ daily, ...r }) => r), checks }, null, 2));
-  else console.log(report(runs, checks));
-  if (args.includes("--check") && !checks.every((c) => c.pass)) process.exit(1);
+  const targets = phase1(runs);
+  if (args.includes("--json")) console.log(JSON.stringify({ runs: runs.map(({ daily, ...r }) => r), checks, targets }, null, 2));
+  else console.log(report(runs, checks, targets));
+  // --check gates on the targets of the phases shipped so far; neutrality is Phase 2's.
+  if (args.includes("--check") && !targets.pass) process.exit(1);
 }

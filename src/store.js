@@ -107,7 +107,8 @@ export function notify(note) {
   const icon = note.icon ?? null;
   const entry = {
     at: Date.now(), title: note.title, body: note.body ?? "", level: note.level ?? "info",
-    id: Number(/(\d+)\.png$/.exec(icon ?? "")?.[1]) || null, encounter: !!note.action,
+    // `quiet`: small news (level-ups, items, quests) that clients list but don't pop up.
+    id: Number(/(\d+)\.png$/.exec(icon ?? "")?.[1]) || null, encounter: !!note.action, quiet: !!note.quiet,
     icon, action: note.action ?? null, timeout: note.timeout ?? null, origin: caller.origin, session: caller.session,
   };
   writeJson(NOTES_FILE, [...notes().filter((n) => Date.now() - n.at < 86400000), entry].slice(-30));

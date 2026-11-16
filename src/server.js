@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
 import { mergeSaves } from "./merge.js";
 import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
 
@@ -21,21 +21,33 @@ const dexId = (n) => {
   return n;
 };
 const caught = () => shared(CAUGHT) ?? [];
+const queueIndex = (n) => (Number.isInteger(n) && n >= 0 ? n : 0);
 
 // Everything a client may change, and only through these.
 const ACTIONS = {
-  throwBall: (ball = "poke") => throwBall(["poke", "great", "ultra"].includes(ball) ? ball : "poke"),
-  runAway: () => runAway(),
+  // `index`: which Pokemon in the tall grass queue, the oldest (0) by default.
+  throwBall: (ball = "poke", index = 0) => throwBall(["poke", "great", "ultra"].includes(ball) ? ball : "poke", queueIndex(index)),
+  runAway: (index = 0) => runAway(queueIndex(index)),
+  // The "welcome back" summary, for a client that sees the person return.
+  digest: () => digest(),
+  // { alert: "off" | "on" | "smart" } or { hardMode: true | false }.
+  setOption: (key, value) => setOption(String(key), value),
   useItem: (project, item) => useItem(String(project), String(item)),
   setPartner: (project, id) => setShared(PARTNERS, { ...(shared(PARTNERS) ?? {}), [String(project)]: dexId(id) }),
-  catch: (id) => recordCatches([dexId(id)]),
+  // Debug only: set POKEDEX_DEBUG=1 when starting the server.
+  catch: (id) => {
+    dexId(id);
+    if (process.env.POKEDEX_DEBUG !== "1") throw new Error("catch is a debug action: start the server with POKEDEX_DEBUG=1");
+    return recordCatches([dexId(id)]);
+  },
   release: (id) => setShared(CAUGHT, caught().filter((n) => n !== dexId(id))),
   setSort: (sort) => setShared("agents.sort", SORTS.includes(sort) ? sort : "priority"),
   // What an app sees its agents do (Herdr's pokedex-agents, Rex's daemon).
   taskFinished: (project, partner, ms, app = null) => finishTask(String(project), dexId(partner), Number(ms) || 0, app),
   subTaskFinished: (project, partner) => finishSubTask(String(project), dexId(partner)),
   unblocked: (project, ms) => unblocked(String(project), Number(ms) || 0),
-  met: (ids, project = null) => recordCatches(ids.map(dexId), project),
+  // Opening an agent no longer catches its partner; kept so older clients don't error.
+  met: () => null,
   // A project's key, found from its repo: progress kept under its old name moves to the key.
   resolveProject: (name, key) => {
     migrateProject(String(name), String(key));
@@ -44,7 +56,7 @@ const ACTIONS = {
   // Default partners for projects that have none yet; a saved partner is never replaced.
   savePartners: (missing) => {
     const partners = shared(PARTNERS) ?? {};
-    const fresh = Object.fromEntries(Object.entries(missing ?? {}).filter(([k]) => partners[k] === undefined).map(([k, id]) => [k, dexId(id)]));
+    const fresh = Object.fromEntries(Object.entries(missing ?? {}).filter(([k]) => partners[k] === undefined).map(([k, id]) => [k, defaultPartner(dexId(id))]));
     if (Object.keys(fresh).length) setShared(PARTNERS, { ...partners, ...fresh });
   },
   // Another save joined into this one, once (see merge.js); `id` names it so a second try does nothing.

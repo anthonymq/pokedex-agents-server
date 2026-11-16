@@ -44,7 +44,13 @@ async function nextState(reader, test) {
 test("changes go through named actions and land in the saved game", async () => {
   expect(await call("setPartner", "/code/app", 25)).toEqual({ ok: true, value: null });
   expect(shared(PARTNERS)).toEqual({ "/code/app": 25 });
-  expect((await call("catch", 4)).ok).toBe(true);
+  expect((await call("catch", 4)).ok).toBe(false); // a debug action
+  process.env.POKEDEX_DEBUG = "1";
+  try {
+    expect((await call("catch", 4)).ok).toBe(true);
+  } finally {
+    delete process.env.POKEDEX_DEBUG;
+  }
   expect(shared(CAUGHT)).toContain(4);
   expect((await call("release", 4)).ok).toBe(true);
   expect(shared(CAUGHT) ?? []).not.toContain(4);

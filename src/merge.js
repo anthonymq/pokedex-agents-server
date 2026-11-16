@@ -34,6 +34,8 @@ function mergeGame(a = {}, b = {}) {
     badges: union(a.badges, b.badges),
     shiny: union(a.shiny, b.shiny),
     encounter: null,
+    wild: [],
+    happy: {},
     encounters: sumBy(a.encounters, b.encounters),
     recent: [...(a.recent ?? []), ...(b.recent ?? [])].sort((x, y) => y.at - x.at).slice(0, recentLen),
     dex,
