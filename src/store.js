@@ -50,9 +50,29 @@ function load() {
   return cache;
 }
 
-export const shared = (key) => load()[key];
-export const allShared = () => load();
+// Kept on this machine only, in local.json, never in the save: the readable names of projects (see
+// game.js: PROJECTS, KEYS, LABELS). The apps get them with the state; exports and merges don't.
+export const LOCAL_FILE = path.join(STATE_DIR, "local.json");
+const LOCAL_KEYS = new Set(["pokedex.projects", "pokedex.keys", "pokedex.labels"]);
+const local = () => readJson(LOCAL_FILE, {});
+
+export const shared = (key) => (LOCAL_KEYS.has(key) ? local()[key] : load()[key]);
+export const allShared = () => ({ ...load(), ...local() });
+// Takes `key` out of the save file (used once, to move the old project map to local.json).
+export function takeFromSave(key) {
+  const all = load();
+  if (!(key in all)) return undefined;
+  const { [key]: value, ...rest } = all;
+  writeJson(FILE, rest);
+  cache = rest;
+  cacheStamp = "";
+  return value;
+}
 export function setShared(key, value) {
+  if (LOCAL_KEYS.has(key)) {
+    writeJson(LOCAL_FILE, { ...local(), [key]: structuredClone(value) });
+    return;
+  }
   const all = { ...load(), [key]: structuredClone(value) };
   writeJson(FILE, all);
   cache = all;

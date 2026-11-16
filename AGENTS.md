@@ -27,4 +27,7 @@ The Pokedex game for coding agents: rules, save and a local HTTP/WebSocket API, 
 - `src/game.js` holds the rules, `src/store.js` the save, `src/server.js` the API (`/state`, `/events`, `/ws`, `POST /call`, `POST /share`), `src/merge.js` save merging and `src/share.js` the X post text and the share-card PNG.
 - Tests: `bun test`. They start a server on a free port with its state in a temp folder.
 - After changing `game.js` or `pokemon.js`, run `scripts/sync-game.sh` in both app repos (`POKEDEX_SERVER_DIR` points them here) and commit those copies too.
+- Bump `RULES_VERSION` in `game.js` with any change to what the rules compute: the apps compare it with the server's (`/version`, and `view` in the state) and warn when they differ.
+- Project keys in the save are hashes (`src/keys.js`). The readable names (repo paths, Herdr space names) live only in `local.json` and the hashing key in `secret`, both in the state folder: never copy them anywhere shared.
+- For an isolated server, set `POKEDEX_STATE` and `POKEDEX_PORT` in the shell that starts it, not inside a script: a server an app spawns doesn't inherit variables changed in-process, and would open the real save.
 - Commit messages: a plain sentence, no prefix.

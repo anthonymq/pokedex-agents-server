@@ -22,6 +22,11 @@ afterAll(() => {
 
 const call = (action, ...args) =>
   fetch(`${base}/call`, { method: "POST", body: JSON.stringify({ action, args }) }).then((r) => r.json());
+// An agent event an app queued while the server was down, sent with the time it happened.
+const callAt = (at, action, ...args) =>
+  fetch(`${base}/call`, { method: "POST", body: JSON.stringify({ action, args, at }) }).then((r) => r.json());
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const saveFile = () => fs.readFileSync(path.join(process.env.POKEDEX_STATE, "shared.json"), "utf8");
 
 // Reads server-sent `state` events until one passes `test`.
 async function nextState(reader, test) {
@@ -43,7 +48,7 @@ async function nextState(reader, test) {
 
 test("changes go through named actions and land in the saved game", async () => {
   expect(await call("setPartner", "/code/app", 25)).toEqual({ ok: true, value: null });
-  expect(shared(PARTNERS)).toEqual({ "/code/app": 25 });
+  expect(Object.values(shared(PARTNERS))).toEqual([25]);
   expect((await call("catch", 4)).ok).toBe(false); // a debug action
   process.env.POKEDEX_DEBUG = "1";
   try {
@@ -54,6 +59,56 @@ test("changes go through named actions and land in the saved game", async () => 
   expect(shared(CAUGHT)).toContain(4);
   expect((await call("release", 4)).ok).toBe(true);
   expect(shared(CAUGHT) ?? []).not.toContain(4);
+});
+
+test("project names are hashed in the save and kept readable only on this machine", async () => {
+  await call("setPartner", "/work/secret-client-repo", 7);
+  await call("resolveProject", "client space", "/work/secret-client-repo");
+  const [key] = Object.entries(shared(PARTNERS)).find(([, id]) => id === 7);
+  expect(key).toMatch(/^p:[0-9a-f]{16}$/);
+  expect(saveFile()).not.toContain("secret-client");
+  expect(saveFile()).not.toContain("client space");
+  const state = await (await fetch(`${base}/state`)).json();
+  expect(state.shared["pokedex.labels"][key]).toBe("secret-client-repo");
+  expect(state.shared["pokedex.keys"]["/work/secret-client-repo"]).toBe(key);
+  expect(state.shared["pokedex.projects"]["client space"]).toBe("/work/secret-client-repo");
+});
+
+test("a save with readable project keys is hashed when it comes in", async () => {
+  const game = { version: 5, party: [4], pokemon: { 4: 100 }, dex: { 4: { at: 1, project: "/old/repo", how: "wild" } }, happy: { "/old/repo": true } };
+  expect((await call("import", { [GAME]: game, [PARTNERS]: { "/old/repo": 4 } })).ok).toBe(true);
+  const key = (await (await fetch(`${base}/state`)).json()).shared["pokedex.keys"]["/old/repo"];
+  expect(shared(PARTNERS)[key]).toBe(4);
+  expect(shared(GAME).dex[4].project).toBe(key);
+  expect(shared(GAME).happy).toEqual({ [key]: true });
+  expect(saveFile()).not.toContain("/old/repo");
+});
+
+test("the state carries what the apps draw from the clock, and the rules' versions", async () => {
+  const version = await (await fetch(`${base}/version`)).json();
+  expect(version).toEqual({ rules: expect.any(Number), save: expect.any(Number) });
+  const { view } = await (await fetch(`${base}/state`)).json();
+  expect(view).toMatchObject({ rules: version.rules, save: version.save, streak: expect.any(Number) });
+  expect(view.quests.some((q) => q.id === "d-tasks")).toBe(true);
+});
+
+test("a queued turn counts on the day it happened; one older than 3 days is refused", async () => {
+  const yesterday = new Date(Date.now() - 86400000);
+  yesterday.setHours(10, 0, 0, 0);
+  expect((await callAt(yesterday.getTime(), "taskFinished", "/q/repo", 4, 60000)).ok).toBe(true);
+  expect(shared(GAME).stats.days[dayKey(yesterday)].turns).toBe(1);
+  const old = await callAt(Date.now() - 4 * 86400000, "taskFinished", "/q/repo", 4, 60000);
+  expect(old.ok).toBe(false);
+});
+
+test("a turn counts for at most 6 hours, and reports per minute are capped", async () => {
+  await call("taskFinished", "/cap/repo", 4, 10 * 86400000);
+  expect(shared(GAME).stats.lengths.at(-1)).toBe(6 * 3600000);
+  const at = Date.now() - 3600000; // an hour ago: no turn reported yet in that minute
+  const replies = [];
+  for (let i = 0; i < 31; i++) replies.push(await callAt(at, "taskFinished", "/cap/repo", 4, 1000));
+  expect(replies.slice(0, 30).every((r) => r.ok)).toBe(true);
+  expect(replies[30]).toEqual({ ok: false, error: "too many taskFinished reports in one minute" });
 });
 
 test("bad input is refused without touching the game", async () => {
