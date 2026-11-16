@@ -4,12 +4,14 @@
 //   GET  /events   the same, as server-sent events: one `state` event now and after each change
 //   GET  /ws       the same, as WebSocket text messages (Herdr's fetch can't read a stream)
 //   POST /call     { action, args, origin, session } -> { ok, value } | { ok: false, error }
+//   POST /share    { sprites? } -> { ok, text, url, card, copied }: a post for X, its card on the clipboard
 // The rules (game.js) run here and nowhere else.
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
 import { mergeSaves } from "./merge.js";
+import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
 
 export const SERVER_FILE = path.join(STATE_DIR, "server.json");
 export const DEFAULT_PORT = 7151;
@@ -112,6 +114,20 @@ export function startServer({ port = DEFAULT_PORT, log = console.log } = {}) {
         });
         req.signal.addEventListener("abort", () => streams.delete(ctl));
         return new Response(body, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+      },
+      "/share": {
+        POST: async (req) => {
+          const body = await req.json().catch(() => ({}));
+          try {
+            const g = game(), have = caught();
+            const text = shareText(g, have);
+            const card = path.join(STATE_DIR, "share-card.png");
+            fs.writeFileSync(card, renderCard(g, have, shared(PARTNERS), spriteDir(body?.sprites)));
+            return json({ ok: true, text, url: intentUrl(text), card, copied: await copyImage(card) });
+          } catch (error) {
+            return json({ ok: false, error: error?.message ?? String(error) }, 500);
+          }
+        },
       },
       "/call": {
         POST: async (req) => {

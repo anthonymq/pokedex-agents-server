@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 process.env.POKEDEX_STATE = fs.mkdtempSync(path.join(os.tmpdir(), "pokedex-server-"));
+process.env.POKEDEX_NO_CLIPBOARD = "1";
 const { startServer } = await import("../src/server.js");
 const { setShared, shared } = await import("../src/store.js");
 const { GAME, CAUGHT, PARTNERS } = await import("../src/game.js");
@@ -75,6 +76,21 @@ test("a merge awards the badges the joined progress has earned", async () => {
   expect(await call("merge", "other", { [GAME]: { tasks: 20 } })).toEqual({ ok: true, value: "merged" });
   expect(shared(GAME).tasks).toBe(60);
   expect(shared(GAME).badges).toContain("cascade");
+});
+
+test("/share returns an X post with the totals and writes a readable card", async () => {
+  setShared(CAUGHT, [1, 4, 7, 25]);
+  setShared(GAME, { tasks: 12, badges: ["boulder"], shiny: [25] });
+  const r = await fetch(`${base}/share`, { method: "POST", body: "{}" }).then((res) => res.json());
+  expect(r.ok).toBe(true);
+  expect(r.text).toContain("4/151 caught (1 shiny");
+  expect(r.text).toContain("1/8 badges · 12 tasks");
+  expect(new URL(r.url).searchParams.get("text")).toBe(r.text);
+  expect(r.copied).toBe(false);
+  const { decodePng } = await import("../src/share.js");
+  const card = decodePng(fs.readFileSync(r.card));
+  expect(card.width).toBe(1200);
+  expect(card.height).toBe(675);
 });
 
 test("/events sends the state at once, then again after a change", async () => {
