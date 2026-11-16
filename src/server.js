@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, chooseStarter, setParty, setLead, claimGift, result, markSeen, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
 import { mergeSaves } from "./merge.js";
 import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
 
@@ -32,7 +32,16 @@ const ACTIONS = {
   digest: () => digest(),
   // { alert: "off" | "on" | "smart" } or { hardMode: true | false }.
   setOption: (key, value) => setOption(String(key), value),
-  useItem: (project, item) => useItem(String(project), String(item)),
+  useItem: (id, item) => useItem(dexId(Number(id)), String(item)),
+  // The party (the first leads): pick the starter once, then reorder or swap any time.
+  chooseStarter: (id) => chooseStarter(dexId(id)),
+  setParty: (ids) => setParty((Array.isArray(ids) ? ids : []).map(dexId)),
+  setLead: (id) => setLead(dexId(id)),
+  claimGift: (tr, id) => claimGift(Number(tr), dexId(id)),
+  // What a finished turn produced: "commit", "green" (tests or CI) or "merged".
+  result: (project, kind) => result(String(project), String(kind)),
+  seen: (key) => markSeen(String(key)),
+  // A project's mascot, drawn on its cards (cosmetic).
   setPartner: (project, id) => setShared(PARTNERS, { ...(shared(PARTNERS) ?? {}), [String(project)]: dexId(id) }),
   // Debug only: set POKEDEX_DEBUG=1 when starting the server.
   catch: (id) => {

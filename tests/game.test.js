@@ -25,11 +25,17 @@ beforeEach(() => {
 });
 afterEach(() => { Math.random = realRandom; });
 
+// A save with a starter leading, so XP has somewhere to go.
+const withParty = (party, pokemon = {}, extra = {}) => {
+  herdr.state[G.CAUGHT] = [...new Set([...(herdr.state[G.CAUGHT] ?? []), ...party])].sort((x, y) => x - y);
+  herdr.state[G.GAME] = { party, pokemon, ...extra };
+};
+
 describe("XP and levels", () => {
-  test("a turn earns 10 XP plus 5 per full minute, capped at 100", () => {
+  test("a turn earns 10 XP plus 5 per full minute, capped at 50", () => {
     expect(G.taskXp(5000)).toBe(10);
     expect(G.taskXp(180000)).toBe(25);
-    expect(G.taskXp(3600000)).toBe(100);
+    expect(G.taskXp(3600000)).toBe(50);
     expect(G.taskXp(-1)).toBe(10);
   });
 
@@ -41,13 +47,92 @@ describe("XP and levels", () => {
     expect(G.progress(4 * 16 ** 2 + (4 * 17 ** 2 - 4 * 16 ** 2) / 2).into).toBeCloseTo(0.5);
   });
 
-  test("level-up news only when a partner crosses a multiple of 5", () => {
-    herdr.state[G.GAME] = { xp: { p: 4 * 8 ** 2 } }; // Lv8
+  test("level-up news only when the lead crosses a multiple of 5, and it's quiet", () => {
+    withParty([1], { 1: 4 * 8 ** 2 }); // Lv8
     G.finishTask("p", 1, 0); // +10 XP, still Lv8
     expect(titles()).toEqual([]);
-    herdr.state[G.GAME].xp.p = 4 * 10 ** 2 - 5; // just under Lv10
+    herdr.state[G.GAME].pokemon[1] = 4 * 10 ** 2 - 5; // just under Lv10
     G.finishTask("p", 1, 0);
     expect(titles()).toEqual(["Bulbasaur reached Lv 10!"]);
+    expect(herdr.notes[0].quiet).toBe(true);
+  });
+
+  test("the day's turns pay less and less: 1-5 in full, then 40%, 10%, 3%", () => {
+    withParty([1]);
+    const gains = [];
+    for (let i = 0; i < 60; i++) {
+      const before = G.game().pokemon[1] ?? 0;
+      G.finishTask("p", 1, 600000); // 50 XP at full rate
+      gains.push(G.game().pokemon[1] - before);
+    }
+    expect([gains[0], gains[4], gains[5], gains[19], gains[20], gains[49], gains[50]]).toEqual([50, 50, 20, 20, 5, 5, 2]);
+  });
+});
+
+describe("the party", () => {
+  test("XP goes to the lead whatever the project, and 25% to the rest of the party", () => {
+    withParty([4, 7]);
+    G.finishTask("a", 1, 600000);
+    G.finishTask("b", 25, 600000);
+    expect(G.game().pokemon).toEqual({ 4: 100, 7: 26 });
+    expect(G.game().lifetime).toBe(100);
+  });
+
+  test("XP before a starter waits for it; the starter is picked once among the three", () => {
+    G.finishTask("p", 1, 600000);
+    expect(G.game()).toMatchObject({ party: [], bank: 50, lifetime: 50 });
+    expect(() => G.chooseStarter(25)).toThrow();
+    G.chooseStarter(7);
+    expect(G.game()).toMatchObject({ party: [7], pokemon: { 7: 50 }, bank: 0 });
+    expect(herdr.state[G.CAUGHT]).toEqual([7]);
+    expect(() => G.chooseStarter(1)).toThrow();
+  });
+
+  test("the party holds up to 6 Pokemon from the Pokedex; any of them can lead", () => {
+    withParty([4]);
+    herdr.state[G.CAUGHT] = [4, 10, 25];
+    G.setLead(25);
+    expect(G.game().party).toEqual([25, 4]);
+    expect(() => G.setParty([4, 151])).toThrow();
+    expect(() => G.setParty([4, 4])).toThrow();
+    expect(() => G.setParty([])).toThrow();
+  });
+
+  test("the trainer level grows with lifetime XP, the same however many projects", () => {
+    expect(G.trainerLevel({ lifetime: 0 })).toBe(1);
+    expect(G.trainerLevel({ lifetime: 40 * 25 })).toBe(5);
+    expect(G.trainerLevel({ lifetime: 40 * 100 })).toBe(10);
+  });
+});
+
+describe("gifts at trainer levels", () => {
+  test("a single gift arrives by itself; a choice waits for the person", () => {
+    withParty([1], {}, { lifetime: 40 * 25 - 10 });
+    G.finishTask("p", 1, 0); // TR5: Eevee
+    expect(herdr.state[G.CAUGHT]).toContain(133);
+    expect(G.game().gifts.got).toEqual([5]);
+    herdr.state[G.GAME].lifetime = 40 * 225 - 10;
+    G.finishTask("p", 1, 0); // TR15: a fossil to choose; TR10's Lapras on the way
+    expect(G.game().gifts).toEqual({ got: [5, 10], pending: [15] });
+    expect(() => G.claimGift(15, 25)).toThrow();
+    G.claimGift(15, 140);
+    expect(G.game().gifts).toEqual({ got: [5, 10, 15], pending: [] });
+    expect(herdr.state[G.CAUGHT]).toContain(140);
+  });
+});
+
+describe("results", () => {
+  test("a commit, green tests and a merge pay once per turn and project; a merge finds an Ultra Ball", () => {
+    withParty([1]);
+    expect(G.result("p", "commit")).toBeNull(); // no turn yet
+    G.finishTask("p", 1, 0); // 10 XP
+    expect(G.result("p", "commit")).toBe("commit");
+    expect(G.result("p", "commit")).toBeNull();
+    G.result("p", "green");
+    G.result("p", "merged");
+    expect(G.game().pokemon[1]).toBe(10 + 20 + 30 + 50);
+    expect(G.game().bag.ultra).toBe(1);
+    expect(() => G.result("p", "deploy")).toThrow();
   });
 });
 
@@ -63,21 +148,21 @@ describe("project keys", () => {
     expect(G.projectKey("other")).toBe("other");
   });
 
-  test("migrating adds XP to the key and keeps an existing partner there", () => {
-    herdr.state[G.PARTNERS] = { "old-name": 4, "/r/kanto": 25 };
-    herdr.state[G.GAME] = { xp: { "old-name": 900, "/r/kanto": 100 } };
+  test("migrating a project moves its mascot and keeps an existing one there", () => {
+    herdr.state[G.PARTNERS] = { "old-name": 4, "/r/kanto": 25, "/r/other": 7 };
     G.migrateProject("old-name", "/r/kanto");
-    expect(G.game().xp).toEqual({ "/r/kanto": 1000 });
-    expect(herdr.state[G.PARTNERS]).toEqual({ "/r/kanto": 25 });
+    G.migrateProject("/r/other", "/r/new");
+    expect(herdr.state[G.PARTNERS]).toEqual({ "/r/kanto": 25, "/r/new": 7 });
   });
 });
 
 describe("evolution, jingles and badges", () => {
-  test("reaching the evolution level evolves, catches, plays one jingle and earns Thunder", () => {
-    herdr.state[G.GAME] = { xp: { p: 1000 } };
-    G.finishTask("p", 4, 600000); // +60 XP -> Lv16: Charmander -> Charmeleon
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 5 });
-    expect(herdr.state[G.CAUGHT]).toEqual([5]);
+  test("reaching the evolution level evolves, keeps the XP, catches, plays one jingle and earns Thunder", () => {
+    withParty([4, 7], { 4: 1000 });
+    G.finishTask("p", 1, 600000); // +50 XP -> Lv16: Charmander -> Charmeleon
+    expect(G.game().party).toEqual([5, 7]);
+    expect(G.game().pokemon[5]).toBe(1050);
+    expect(herdr.state[G.CAUGHT]).toEqual([4, 5, 7]);
     expect(G.game().recent.map((r) => r.id)).toEqual([5]);
     expect(G.game().badges).toContain("thunder");
     expect(herdr.sounds).toEqual(["mods/pokedex-agents/sounds/evolve.mp3"]); // the badge stays quiet
@@ -92,26 +177,18 @@ describe("evolution, jingles and badges", () => {
 
   test("jingles stay silent when sounds are off", () => {
     herdr.soundsEnabled = false;
-    herdr.state[G.GAME] = { xp: { p: 1000 } };
-    G.finishTask("p", 4, 600000);
+    withParty([4], { 4: 1000 });
+    G.finishTask("p", 1, 600000);
     expect(herdr.sounds).toEqual([]);
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 5 });
-  });
-});
-
-describe("partners", () => {
-  test("a project's first XP saves its partner, and a saved one is kept", () => {
-    G.finishTask("p", 52, 0);
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 52 });
-    G.finishTask("p", 1, 0);
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 52 });
+    expect(G.game().party).toEqual([5]);
   });
 });
 
 describe("sub-agents", () => {
   test("a finished sub-agent earns 10 XP without counting a task", () => {
+    withParty([1]);
     G.finishSubTask("p", 1);
-    expect(G.game().xp.p).toBe(G.SUBTASK_XP);
+    expect(G.game().pokemon[1]).toBe(G.SUBTASK_XP);
     expect(G.game().subtasks).toBe(1);
     expect(G.game().tasks).toBe(0);
   });
@@ -188,17 +265,17 @@ describe("encounters", () => {
 
 describe("items and item evolutions", () => {
   test("stone Pokemon no longer evolve by level", () => {
-    herdr.state[G.GAME] = { xp: { p: 1e6 } };
-    G.finishTask("p", 25, 0);
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 25 });
+    withParty([25], { 25: 1e6 });
+    G.finishTask("p", 1, 0);
+    expect(G.game().party).toEqual([25]);
   });
 
-  test("using a stone evolves the partner and spends it; without one nothing happens", () => {
-    herdr.state[G.PARTNERS] = { p: 133 };
-    herdr.state[G.GAME] = { bag: { thunder: 1 } };
-    expect(G.useItem("p", "fire")).toBeNull();
-    expect(G.useItem("p", "thunder")).toBe(135);
-    expect(herdr.state[G.PARTNERS]).toEqual({ p: 135 });
+  test("using a stone evolves a party member and spends it; without one, or outside the party, nothing happens", () => {
+    withParty([133], { 133: 500 }, { bag: { thunder: 1 } });
+    expect(G.useItem(133, "fire")).toBeNull();
+    expect(G.useItem(25, "thunder")).toBeNull();
+    expect(G.useItem(133, "thunder")).toBe(135);
+    expect(G.game()).toMatchObject({ party: [135], pokemon: { 135: 500 } });
     expect(G.game().bag.thunder).toBe(0);
     expect(G.game().dex[135]).toMatchObject({ how: "evolved" });
   });
@@ -214,23 +291,24 @@ describe("blocked agents", () => {
   test("by default a slow answer costs nothing, and a fast one makes the next task earn 25% more", () => {
     G.unblocked("p", G.FAINT_MS);
     expect(G.game().fainted).toEqual({});
+    withParty([1]);
     G.unblocked("p", G.FAST_MS);
     G.finishTask("p", 1, 120000); // 20 XP, +25%
-    expect(G.game().xp.p).toBe(25);
+    expect(G.game().pokemon[1]).toBe(25);
     G.finishTask("p", 1, 120000);
-    expect(G.game().xp.p).toBe(45);
+    expect(G.game().pokemon[1]).toBe(45);
   });
 
   test("hard mode: left waiting 10 minutes, the partner faints and its next task earns no XP", () => {
     herdr.state[G.OPTIONS] = { hardMode: true };
-    herdr.state[G.PARTNERS] = { p: 1 };
+    withParty([1]);
     G.unblocked("p", G.FAINT_MS);
     expect(G.game().fainted).toEqual({ p: true });
     G.finishTask("p", 1, 0);
-    expect(G.game().xp.p ?? 0).toBe(0);
+    expect(G.game().pokemon[1] ?? 0).toBe(0);
     expect(G.game().fainted).toEqual({});
     G.finishTask("p", 1, 0);
-    expect(G.game().xp.p).toBe(10);
+    expect(G.game().pokemon[1]).toBe(10);
   });
 });
 
@@ -264,7 +342,29 @@ describe("save versions and local stats", () => {
     const e = { id: 94, at: Date.now(), balls: 3 };
     herdr.state[G.GAME] = { version: 2, encounter: e, fainted: { p: true } };
     G.migrateSave();
-    expect(G.game()).toMatchObject({ version: 3, wild: [e], encounter: e, fainted: {} });
+    expect(G.game()).toMatchObject({ version: G.SAVE_VERSION, wild: [e], encounter: e, fainted: {} });
+  });
+
+  test("version 3 to 4: per-project partners become one party, losing nothing", () => {
+    herdr.state[G.PARTNERS] = { a: 4, b: 25, c: 4, d: 1, e: 7, f: 10, g: 16, h: 19 };
+    herdr.state[G.CAUGHT] = [25, 150];
+    const xp = { a: 900, b: 2000, c: 100, d: 50, e: 400, f: 30, g: 20, h: 10 };
+    herdr.state[G.GAME] = { version: 3, xp };
+    G.migrateSave();
+    const g = G.game();
+    expect(g.version).toBe(4);
+    expect(g.pokemon).toEqual({ 4: 1000, 25: 2000, 1: 50, 7: 400, 10: 30, 16: 20, 19: 10 });
+    expect(g.party).toEqual([25, 4, 7, 1, 10, 16]); // the most XP leads
+    expect(g.lifetime).toBe(3510);
+    expect(herdr.state[G.CAUGHT]).toEqual([1, 4, 7, 10, 16, 19, 25, 150]);
+    expect(herdr.state[G.GAME].xp).toBeUndefined();
+    expect(herdr.state[G.PARTNERS].a).toBe(4); // still the mascot
+    expect(g.seen).toEqual([]); // the New Pokedex explainer is due
+  });
+
+  test("a brand-new save doesn't get the New Pokedex explainer", () => {
+    G.finishTask("p", 1, 0);
+    expect(G.game().seen).toEqual(["phase2"]);
   });
 
   test("a save newer than the rules is left alone", () => {

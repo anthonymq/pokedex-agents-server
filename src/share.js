@@ -201,13 +201,8 @@ export function renderCard(g, caught, partners, sprites) {
   c.text(124, 54, "TRAINER CARD", C.cream, 6);
   c.text(W - 56 - 14 * 12, 64, "POKEDEX AGENTS", C.muted, 2);
 
-  // Each Pokemon once, at its best project's XP.
-  const best = new Map();
-  for (const [project, xp] of Object.entries(g.xp)) {
-    const id = partners?.[project];
-    if (Number.isInteger(id) && xp > (best.get(id) ?? -1)) best.set(id, xp);
-  }
-  const team = [...best].sort((a, b) => b[1] - a[1]);
+  // The party, lead first.
+  const team = (g.party ?? []).map((id) => [id, g.pokemon?.[id] ?? 0]);
 
   c.rect(56, 120, 400, 420, C.lcd);
   if (team.length) {

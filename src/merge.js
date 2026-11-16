@@ -27,6 +27,14 @@ function mergeGame(a = {}, b = {}) {
   return {
     ...b, ...a,
     xp: sumBy(a.xp, b.xp),
+    // One party: ours if we have one; each Pokemon's XP and the trainer's lifetime XP add up.
+    pokemon: sumBy(a.pokemon, b.pokemon),
+    party: a.party?.length ? a.party : b.party ?? [],
+    lifetime: (a.lifetime ?? 0) + (b.lifetime ?? 0),
+    bank: (a.bank ?? 0) + (b.bank ?? 0),
+    gifts: { got: union(a.gifts?.got, b.gifts?.got), pending: union(a.gifts?.pending, b.gifts?.pending) },
+    results: {},
+    seen: union(a.seen, b.seen),
     tasks: (a.tasks ?? 0) + (b.tasks ?? 0),
     subtasks: (a.subtasks ?? 0) + (b.subtasks ?? 0),
     evolutions: (a.evolutions ?? 0) + (b.evolutions ?? 0),

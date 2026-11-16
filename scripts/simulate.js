@@ -49,12 +49,13 @@ const G = await import("../src/game.js");
 
 // The roadmap's personas. `checks`: how many times a day they open the tall grass and throw at
 // everything waiting (spread over the day; the last one at the end of it). `turnMin`: median turn length in minutes. `block`: share of turns where the agent
-// asks them something; `answerMin`: mean time to answer it.
+// asks them something; `answerMin`: mean time to answer it. `commit`, `green`, `merged`: share of
+// turns that end with a commit, green tests/CI, a merged MR.
 export const PERSONAS = {
-  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, checks: 1, turnMin: 3, block: 0.3, answerMin: 15 },
-  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, checks: 3, turnMin: 4, block: 0.3, answerMin: 4 },
+  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, checks: 1, turnMin: 3, block: 0.3, answerMin: 15, commit: 0.3, green: 0.2, merged: 0.02 },
+  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, checks: 3, turnMin: 4, block: 0.3, answerMin: 4, commit: 0.3, green: 0.2, merged: 0.02 },
   // 5-6 active days a week: weekdays, plus every other Saturday.
-  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, checks: 4, turnMin: 5, block: 0.3, answerMin: 6 },
+  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, checks: 4, turnMin: 5, block: 0.3, answerMin: 6, commit: 0.3, green: 0.2, merged: 0.02 },
 };
 // Default partners, as the clients pick them: one base form per repo.
 const BASES = [1, 4, 7, 25, 133, 10, 16, 92, 63, 66, 74, 129, 147, 60, 81];
@@ -88,6 +89,8 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
     const today = { day: d, active: false, turns: 0, seen: 0, caught: 0, fled: 0, quests: 0, interruptions: 0 };
     if (isActive(p, date)) {
       today.active = true;
+      // Everyone picks a starter on their first day; a gift waiting for a choice takes its first option.
+      if (!G.game().party.length) G.chooseStarter(4);
       // Turns spread over a 9-hour day from 9:00.
       const gap = (9 * 3600000) / p.turns;
       clock = date.getTime() + 9 * 3600000;
@@ -99,6 +102,8 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
         const ms = turnMs(p.turnMin);
         if (rand() < p.block) G.unblocked(project, exp(p.answerMin) * 60000);
         G.finishTask(project, partners()[project], ms, apps[t % apps.length]);
+        for (const kind of ["commit", "green", "merged"]) if (rand() < p[kind]) G.result(project, kind);
+        for (const tr of G.game().gifts.pending) G.claimGift(tr, G.GIFTS.find((x) => x.tr === tr).ids[0]);
         // A new wild Pokemon interrupts only when the alert option allows it (agents are busy all day).
         const fresh = G.game().wild.at(-1);
         if (fresh && fresh.at === clock) {
@@ -116,7 +121,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
           }
         }
         // Stones and Link Cables are used as soon as a partner can take one.
-        for (const project of projects) for (const it of G.itemsFor(partners()[project])) if (it.have > 0) { G.useItem(project, it.item); break; }
+        for (const id of G.game().party) for (const it of G.itemsFor(id)) if (it.have > 0) { G.useItem(id, it.item); break; }
         clock += gap;
       }
       const after = G.game();
@@ -128,7 +133,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
     }
     const g = G.game();
     const caught = (mem.state[G.CAUGHT] ?? []).length;
-    const top = Math.max(1, ...Object.values(g.xp).map(G.levelOf));
+    const top = Math.max(1, ...G.partyOf(g).map((x) => x.level));
     if (g.evolutions >= 1) mark("firstEvolution", d);
     for (const b of g.badges) mark(`badge:${b}`, d);
     if (KANTO.filter((b) => g.badges.includes(b)).length >= 4) mark("fourBadges", d);
@@ -137,14 +142,14 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
     today.caughtTotal = caught;
     out.daily.push(today);
     if ([7, 30, 90, 180, 365].includes(d)) {
-      out.snapshots[d] = { trainer: G.trainerLevel(g), topLevel: top, caught, badges: g.badges.length, xp: Object.values(g.xp).reduce((a, b) => a + b, 0) };
+      out.snapshots[d] = { trainer: G.trainerLevel(g), topLevel: top, caught, badges: g.badges.length, xp: g.lifetime };
     }
   }
   const g = G.game();
   const active = out.daily.filter((x) => x.active);
   const per = (key) => active.reduce((n, x) => n + x[key], 0) / Math.max(1, active.length);
   out.final = {
-    xp: Object.values(g.xp).reduce((a, b) => a + b, 0), trainer: G.trainerLevel(g), caught: (mem.state[G.CAUGHT] ?? []).length,
+    xp: g.lifetime, trainer: G.trainerLevel(g), caught: (mem.state[G.CAUGHT] ?? []).length,
     badges: g.badges.length, tasks: g.tasks, evolutions: g.evolutions, notes: mem.notes,
   };
   out.perActiveDay = {
@@ -173,10 +178,16 @@ export function neutrality(persona = "pro", { repos = 10, days = 90, seed = 1, t
 const when = (d) => (d === undefined ? "never" : `day ${d} (${d <= 14 ? `week ${Math.ceil(d / 7)}` : `month ${Math.ceil(d / 30.4)}`})`);
 const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
-// Phase 1 targets: no forced interruption for anyone by default, the casual player sees >= 90%.
-export function phase1(runs) {
+// Targets of the phases shipped so far.
+// Phase 1: no forced interruption for anyone by default, the casual player sees >= 90%.
+// Phase 2: repo neutrality, the regular player's first evolution on days 2-3, the pro's first Lv100
+// no sooner than day 60.
+export function targets(runs, checks) {
   const by = Object.fromEntries(runs.map((r) => [r.name, r]));
   const rows = [
+    ...checks.map((c) => ({ key: `neutrality ${c.persona} 1 vs ${c.repos}`, value: Math.max(...c.rows.map((r) => Math.abs(r.ratio - 1))), pass: c.pass })),
+    { key: "regular first evolution (day)", value: by.regular.milestones.firstEvolution ?? -1, pass: [2, 3].includes(by.regular.milestones.firstEvolution) },
+    { key: "pro first Lv100 (day)", value: by.pro.milestones.lv100 ?? -1, pass: !(by.pro.milestones.lv100 < 60) },
     ...runs.map((r) => ({ key: `${r.name} forced interruptions/day`, value: r.perActiveDay.interruptions, pass: r.perActiveDay.interruptions === 0 })),
     { key: "casual encounters seen", value: by.casual.perActiveDay.seenShare, pass: by.casual.perActiveDay.seenShare >= 0.9 },
   ];
@@ -203,7 +214,7 @@ function report(runs, checks, targets) {
     lines.push(`  ${c.persona}, 1 vs ${c.repos} repos over ${c.days} days: ${c.pass ? "PASS" : "FAIL"}`);
     for (const r of c.rows) lines.push(`    ${r.key.padEnd(8)} ${String(r.one).padStart(7)} -> ${String(r.many).padStart(7)}  x${r.ratio.toFixed(2)} ${r.pass ? "ok" : "off"}`);
   }
-  lines.push(`\n== Phase 1 targets: ${targets.pass ? "PASS" : "FAIL"}`);
+  lines.push(`\n== Targets (phases 1-2): ${targets.pass ? "PASS" : "FAIL"}`);
   for (const r of targets.rows) lines.push(`    ${r.key.padEnd(34)} ${fmt(r.value)} ${r.pass ? "ok" : "off"}`);
   return lines.join("\n");
 }
@@ -214,9 +225,9 @@ if (import.meta.main) {
   const days = opt("--days", 365), seed = opt("--seed", 1);
   const runs = Object.keys(PERSONAS).map((name) => ({ name, ...simulate(name, { days, seed }) }));
   const checks = [neutrality("pro", { repos: 10, seed }), neutrality("regular", { repos: 2, seed })];
-  const targets = phase1(runs);
-  if (args.includes("--json")) console.log(JSON.stringify({ runs: runs.map(({ daily, ...r }) => r), checks, targets }, null, 2));
-  else console.log(report(runs, checks, targets));
-  // --check gates on the targets of the phases shipped so far; neutrality is Phase 2's.
-  if (args.includes("--check") && !targets.pass) process.exit(1);
+  const goals = targets(runs, checks);
+  if (args.includes("--json")) console.log(JSON.stringify({ runs: runs.map(({ daily, ...r }) => r), checks, targets: goals }, null, 2));
+  else console.log(report(runs, checks, goals));
+  // --check gates on the targets of the phases shipped so far.
+  if (args.includes("--check") && !goals.pass) process.exit(1);
 }
