@@ -67,6 +67,7 @@ const turnMs = (medianMin) => {
   const z = Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
   return Math.round(medianMin * 60000 * Math.exp(0.8 * z));
 };
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const isActive = (p, d) => p.weekdays.includes(d.getDay()) || (p.altSaturday && d.getDay() === 6 && Math.floor(d.getDate() / 7) % 2 === 0);
 
 // Plays one persona for `days` days from `start`. `repos` overrides the persona's repo count.
@@ -86,7 +87,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
 
   for (let d = 1; d <= days; d++) {
     const date = new RealDate(first.getFullYear(), first.getMonth(), first.getDate() + d - 1);
-    const today = { day: d, active: false, turns: 0, seen: 0, caught: 0, fled: 0, quests: 0, interruptions: 0 };
+    const today = { day: d, active: false, turns: 0, seen: 0, caught: 0, fled: 0, quests: 0, gold: 0, interruptions: 0 };
     if (isActive(p, date)) {
       today.active = true;
       // Everyone picks a starter on their first day; a gift waiting for a choice takes its first option.
@@ -129,7 +130,9 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
       today.seen = after.encounters.seen - before.encounters.seen;
       today.caught = after.encounters.caught - before.encounters.caught;
       today.fled = after.encounters.fled - before.encounters.fled;
-      today.quests = after.stats.days[Object.keys(after.stats.days).at(-1)]?.quests ?? 0;
+      const stats = after.stats.days[dayKey(date)] ?? {};
+      today.quests = stats.quests ?? 0;
+      today.gold = stats.gold ?? 0;
     }
     const g = G.game();
     const caught = (mem.state[G.CAUGHT] ?? []).length;
@@ -155,6 +158,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
   out.perActiveDay = {
     encounters: per("seen"), caught: per("caught"), fled: per("fled"), interruptions: per("interruptions"),
     questDays: active.filter((x) => x.quests > 0).length / Math.max(1, active.length),
+    goldDays: active.filter((x) => x.gold > 0).length / Math.max(1, active.length),
     // Share of wild Pokemon the person got to see before they left (vs fleeing unseen).
     seenShare: appeared.size ? [...appeared].filter((k) => shown.has(k)).length / appeared.size : 1,
   };
@@ -182,6 +186,8 @@ const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 // Phase 1: no forced interruption for anyone by default, the casual player sees >= 90%.
 // Phase 2: repo neutrality, the regular player's first evolution on days 2-3, the pro's first Lv100
 // no sooner than day 60.
+// Phase 3: the casual player completes a quest on >= 80% of active days, the pro reaches Gold on
+// <= 40% of them; Rested XP brings the casual player's first evolution into week 1.
 export function targets(runs, checks) {
   const by = Object.fromEntries(runs.map((r) => [r.name, r]));
   const rows = [
@@ -190,6 +196,9 @@ export function targets(runs, checks) {
     { key: "pro first Lv100 (day)", value: by.pro.milestones.lv100 ?? -1, pass: !(by.pro.milestones.lv100 < 60) },
     ...runs.map((r) => ({ key: `${r.name} forced interruptions/day`, value: r.perActiveDay.interruptions, pass: r.perActiveDay.interruptions === 0 })),
     { key: "casual encounters seen", value: by.casual.perActiveDay.seenShare, pass: by.casual.perActiveDay.seenShare >= 0.9 },
+    { key: "casual quest days", value: by.casual.perActiveDay.questDays, pass: by.casual.perActiveDay.questDays >= 0.8 },
+    { key: "pro Gold days", value: by.pro.perActiveDay.goldDays, pass: by.pro.perActiveDay.goldDays <= 0.4 },
+    { key: "casual first evolution (day)", value: by.casual.milestones.firstEvolution ?? -1, pass: by.casual.milestones.firstEvolution <= 7 },
   ];
   return { rows, pass: rows.every((r) => r.pass) };
 }
@@ -205,7 +214,7 @@ function report(runs, checks, targets) {
     lines.push(`  a partner Lv100   ${when(r.milestones.lv100)}`);
     lines.push(`  full Kanto Dex    ${when(r.milestones.fullDex)}`);
     lines.push(`  per active day    ${fmt(r.perActiveDay.encounters)} encounters, ${fmt(r.perActiveDay.caught)} caught, ${fmt(r.perActiveDay.fled)} fled, ${fmt(r.perActiveDay.interruptions)} forced interruptions`);
-    lines.push(`  quest days        ${Math.round(r.perActiveDay.questDays * 100)}% of active days`);
+    lines.push(`  quest days        ${Math.round(r.perActiveDay.questDays * 100)}% of active days, Gold on ${Math.round(r.perActiveDay.goldDays * 100)}%`);
     lines.push(`  encounters seen   ${Math.round(r.perActiveDay.seenShare * 100)}% before they left`);
     lines.push(`  snapshots         ${Object.entries(r.snapshots).map(([d, s]) => `d${d}: TR${s.trainer} top Lv${s.topLevel} ${s.caught} caught ${s.badges} badges`).join(" | ")}`);
   }
@@ -214,7 +223,7 @@ function report(runs, checks, targets) {
     lines.push(`  ${c.persona}, 1 vs ${c.repos} repos over ${c.days} days: ${c.pass ? "PASS" : "FAIL"}`);
     for (const r of c.rows) lines.push(`    ${r.key.padEnd(8)} ${String(r.one).padStart(7)} -> ${String(r.many).padStart(7)}  x${r.ratio.toFixed(2)} ${r.pass ? "ok" : "off"}`);
   }
-  lines.push(`\n== Targets (phases 1-2): ${targets.pass ? "PASS" : "FAIL"}`);
+  lines.push(`\n== Targets (phases 1-3): ${targets.pass ? "PASS" : "FAIL"}`);
   for (const r of targets.rows) lines.push(`    ${r.key.padEnd(34)} ${fmt(r.value)} ${r.pass ? "ok" : "off"}`);
   return lines.join("\n");
 }

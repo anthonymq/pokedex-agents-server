@@ -15,6 +15,15 @@ const G = await import("../src/game.js");
 const realRandom = Math.random;
 const roll = (value) => { Math.random = () => value; };
 const titles = () => herdr.notes.map((n) => n.title);
+const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// The save's stats with each of the `n` days before today active, each like `day`.
+const withHistory = (n, day) => {
+  const now = new Date();
+  const days = Object.fromEntries(Array.from({ length: n }, (_, i) => [key(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1 - i)), { turns: 1, ...day }]));
+  herdr.state[G.GAME] = { ...herdr.state[G.GAME], stats: { days, lengths: [] } };
+};
+// Runs `fn` on each listed day of January 2027, at 10:00.
+const onDays = (dates, fn) => { for (const d of dates) { setSystemTime(new Date(2027, 0, d, 10)); fn(d); } };
 
 beforeEach(() => {
   herdr.state = {};
@@ -50,11 +59,12 @@ describe("XP and levels", () => {
   test("level-up news only when the lead crosses a multiple of 5, and it's quiet", () => {
     withParty([1], { 1: 4 * 8 ** 2 }); // Lv8
     G.finishTask("p", 1, 0); // +10 XP, still Lv8
-    expect(titles()).toEqual([]);
+    const levelNews = () => herdr.notes.filter((n) => n.title.includes("reached Lv"));
+    expect(levelNews()).toEqual([]);
     herdr.state[G.GAME].pokemon[1] = 4 * 10 ** 2 - 5; // just under Lv10
     G.finishTask("p", 1, 0);
-    expect(titles()).toEqual(["Bulbasaur reached Lv 10!"]);
-    expect(herdr.notes[0].quiet).toBe(true);
+    expect(levelNews().map((n) => n.title)).toEqual(["Bulbasaur reached Lv 10!"]);
+    expect(levelNews()[0].quiet).toBe(true);
   });
 
   test("the day's turns pay less and less: 1-5 in full, then 40%, 10%, 3%", () => {
@@ -247,6 +257,12 @@ describe("encounters", () => {
     expect(G.throwRate(e, "ultra")).toBe(1);
   });
 
+  test("Poke Balls from the bag are thrown once the encounter's free ones run out", () => {
+    herdr.state[G.GAME] = { encounter: { id: 94, at: Date.now(), balls: 0 }, bag: { poke: 1 } };
+    expect(G.throwBall("poke")).toBe("fled");
+    expect(G.game().bag.poke).toBe(0);
+  });
+
   test("Great Balls come from the bag and keep it there after the free balls run out", () => {
     herdr.state[G.GAME] = { encounter: { id: 94, at: Date.now(), balls: 1 }, bag: { great: 1 } };
     expect(G.throwBall("poke")).toBe("missed");
@@ -313,14 +329,48 @@ describe("blocked agents", () => {
 });
 
 describe("quests and ranks", () => {
-  test("four quests, one weekly, and a completed one pays once", () => {
+  test("a new player gets the task quests at their minimums, daily and weekly", () => {
+    withParty([1]);
     const qs = G.quests();
-    expect(qs.length).toBe(4);
-    expect(qs.filter((q) => q.weekly).length).toBe(1);
-    for (let i = 0; i < 40; i++) G.finishTask(`p${i % 4}`, 1, 0);
-    const tasks = G.quests().find((q) => q.id === "w-tasks" || q.id === "w-projects");
-    if (tasks) expect(tasks.done).toBe(true);
-    expect(G.quests().every((q) => q.n <= q.need)).toBe(true);
+    expect(qs.map((q) => [q.id, q.needs])).toEqual([["d-tasks", [2, 3, 5]], ["w-tasks", [5, 10, 15]]]);
+  });
+
+  test("tiers sit at 50/100/150% of the player's own median, and each one pays", () => {
+    withParty([1]);
+    withHistory(14, { turns: 30 });
+    expect(G.quests().find((q) => q.id === "d-tasks").needs).toEqual([15, 30, 45]);
+    for (let i = 0; i < 15; i++) G.finishTask("p", 1, 0);
+    expect(G.quests().find((q) => q.id === "d-tasks")).toMatchObject({ tier: 1, need: 30, n: 15 });
+    for (let i = 0; i < 30; i++) G.finishTask("p", 1, 0);
+    const g = G.game();
+    expect(G.quests().find((q) => q.id === "d-tasks")).toMatchObject({ tier: 3, done: true });
+    // 1 + 2 Great Balls, then an Ultra Ball and PokeDollars; plus the active day's Great Ball.
+    expect([g.bag.great, g.bag.ultra, g.money]).toEqual([4, 1, 50]);
+    expect(G.localStats()).toMatchObject({ quests: 1 });
+    expect(g.stats.days[key(new Date())].gold).toBe(1);
+  });
+
+  test("a quiet player keeps the minimums, and only quests the last 30 days show possible are offered", () => {
+    withParty([1]);
+    withHistory(14, { turns: 2 });
+    expect(G.quests().map((q) => [q.id, q.needs])).toEqual([["d-tasks", [2, 3, 5]], ["w-tasks", [7, 14, 21]]]);
+    withHistory(14, { turns: 5, caught: 1 });
+    expect(G.quests().map((q) => q.id)).toEqual(expect.arrayContaining(["d-tasks", "d-catch"]));
+    expect(G.quests().map((q) => q.id)).not.toContain("d-fast");
+  });
+
+  test("one reroll a day, never the task quest nor one that paid", () => {
+    withParty([1]);
+    withHistory(14, { turns: 10, caught: 2, fast: 2, long: 2, variety: 2 });
+    const daily = G.quests().filter((q) => !q.weekly);
+    expect(daily.length).toBe(3);
+    expect(() => G.rerollQuest("d-tasks")).toThrow();
+    const out = daily.find((q) => q.rerollable);
+    const next = G.rerollQuest(out.id);
+    expect(daily.map((q) => q.id)).not.toContain(next);
+    expect(G.quests().map((q) => q.id)).toContain(next);
+    expect(G.quests().some((q) => q.rerollable)).toBe(false);
+    expect(() => G.rerollQuest(G.quests()[1].id)).toThrow();
   });
 
   test("all eight Kanto badges make you Champion in the same save", () => {
@@ -352,7 +402,7 @@ describe("save versions and local stats", () => {
     herdr.state[G.GAME] = { version: 3, xp };
     G.migrateSave();
     const g = G.game();
-    expect(g.version).toBe(4);
+    expect(g.version).toBe(G.SAVE_VERSION);
     expect(g.pokemon).toEqual({ 4: 1000, 25: 2000, 1: 50, 7: 400, 10: 30, 16: 20, 19: 10 });
     expect(g.party).toEqual([25, 4, 7, 1, 10, 16]); // the most XP leads
     expect(g.lifetime).toBe(3510);
@@ -360,6 +410,15 @@ describe("save versions and local stats", () => {
     expect(herdr.state[G.GAME].xp).toBeUndefined();
     expect(herdr.state[G.PARTNERS].a).toBe(4); // still the mascot
     expect(g.seen).toEqual([]); // the New Pokedex explainer is due
+  });
+
+  test("version 4 to 5: the streak carries over with a freeze per 7 active days, and no tutorial", () => {
+    withHistory(15, { turns: 3 });
+    herdr.state[G.GAME] = { ...herdr.state[G.GAME], version: 4, tasks: 45, streak: { last: "2027-01-08", days: 12, best: 20 } };
+    G.migrateSave();
+    const g = G.game();
+    expect(g.streak).toEqual({ last: "2027-01-08", days: 12, best: 20, freezes: 2, active: 15 });
+    expect([g.version, g.tutorial, g.rested, g.money]).toEqual([G.SAVE_VERSION, null, 0, 0]);
   });
 
   test("a brand-new save doesn't get the New Pokedex explainer", () => {
@@ -455,19 +514,63 @@ describe("default partners", () => {
 });
 
 describe("streaks", () => {
-  test("a weekend off keeps the streak; a weekday off breaks it", () => {
-    try {
-      setSystemTime(new Date(2027, 0, 8, 10)); // Friday
-      G.finishTask("p", 1, 0);
-      setSystemTime(new Date(2027, 0, 11, 10)); // Monday
-      expect(G.liveStreak(G.game())).toBe(1);
-      G.finishTask("p", 1, 0);
-      expect(G.game().streak.days).toBe(2);
-      setSystemTime(new Date(2027, 0, 13, 10)); // Wednesday, Tuesday skipped
-      G.finishTask("p", 1, 0);
-      expect(G.game().streak.days).toBe(1);
-    } finally {
-      setSystemTime();
-    }
+  afterEach(() => setSystemTime());
+
+  test("5 active days in the last 7 keep it: two days off a week are fine, a third breaks it", () => {
+    onDays([4, 5, 6, 7, 8], () => G.finishTask("p", 1, 0)); // Monday to Friday
+    expect(G.game().streak.days).toBe(1);
+    setSystemTime(new Date(2027, 0, 10, 10)); // Sunday, nothing yet: through Saturday
+    expect(G.liveStreak(G.game())).toBe(2);
+    onDays([11], () => G.finishTask("p", 1, 0)); // Monday
+    expect(G.game().streak.days).toBe(4);
+    // Thursday, Tuesday and Wednesday off: Thursday is the 7th active day, and its freeze covers
+    // Tuesday but not Wednesday too.
+    onDays([14], () => G.finishTask("p", 1, 0));
+    expect(G.game().streak).toMatchObject({ days: 0, best: 5, freezes: 0 });
+  });
+
+  test("a Streak Freeze, earned every 7 active days, covers a missed day", () => {
+    onDays([4, 5, 6, 7, 8, 11, 12], () => G.finishTask("p", 1, 0)); // 7 active days
+    expect(G.game().streak.freezes).toBe(1);
+    onDays([14], () => G.finishTask("p", 1, 0)); // Thursday, Wednesday missed
+    const g = G.game();
+    expect(g.streak).toMatchObject({ days: 7, freezes: 0 });
+    expect(g.stats.days["2027-01-13"].frozen).toBe(1);
+  });
+});
+
+describe("rested XP", () => {
+  afterEach(() => setSystemTime());
+
+  test("each extra day away banks a day of average XP, up to 3, and XP counts double until it's spent", () => {
+    withParty([1]);
+    onDays([4], () => G.finishTask("p", 1, 600000)); // 50 XP
+    onDays([7], () => G.finishTask("p", 1, 600000)); // 2 days away: 100 banked, 50 of it spent
+    expect([G.game().lifetime, G.game().rested]).toEqual([150, 50]);
+    onDays([18], () => G.finishTask("p", 1, 600000)); // 10 days away: capped at 3 days (150)
+    expect([G.game().lifetime, G.game().rested]).toEqual([250, 100]);
+  });
+
+  test("a usual weekend banks nothing", () => {
+    withParty([1]);
+    onDays([4, 5, 6, 7, 8, 11], () => G.finishTask("p", 1, 600000));
+    expect(G.game().rested).toBe(0);
+  });
+});
+
+describe("Professor Oak's tutorial", () => {
+  test("five first steps on a new save, then 5 Poke Balls", () => {
+    G.chooseStarter(4);
+    expect(G.game().tutorial).toEqual([]);
+    G.finishTask("p", 4, 0);
+    expect(G.game().tutorial).toEqual(["agent", "task"]);
+    roll(0.01); // an encounter (Ivysaur), then a catch
+    G.finishTask("p", 4, 0);
+    expect(G.throwBall()).toBe("caught");
+    G.setLead(2);
+    G.markSeen("trainer");
+    const g = G.game();
+    expect([g.tutorial, g.bag.poke]).toEqual([null, 5]);
+    expect(titles()).toContain("Professor Oak: well done!");
   });
 });

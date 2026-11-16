@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, chooseStarter, setParty, setLead, claimGift, result, markSeen, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, chooseStarter, setParty, setLead, claimGift, result, markSeen, rerollQuest, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
 import { mergeSaves } from "./merge.js";
 import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
 
@@ -40,7 +40,10 @@ const ACTIONS = {
   claimGift: (tr, id) => claimGift(Number(tr), dexId(id)),
   // What a finished turn produced: "commit", "green" (tests or CI) or "merged".
   result: (project, kind) => result(String(project), String(kind)),
+  // "phase2": the New Pokedex explainer was dismissed; "trainer": the trainer card opened.
   seen: (key) => markSeen(String(key)),
+  // Swaps one of today's quests for another (once a day): its id, like "d-catch".
+  rerollQuest: (id) => rerollQuest(String(id)),
   // A project's mascot, drawn on its cards (cosmetic).
   setPartner: (project, id) => setShared(PARTNERS, { ...(shared(PARTNERS) ?? {}), [String(project)]: dexId(id) }),
   // Debug only: set POKEDEX_DEBUG=1 when starting the server.
@@ -52,7 +55,8 @@ const ACTIONS = {
   release: (id) => setShared(CAUGHT, caught().filter((n) => n !== dexId(id))),
   setSort: (sort) => setShared("agents.sort", SORTS.includes(sort) ? sort : "priority"),
   // What an app sees its agents do (Herdr's pokedex-agents, Rex's daemon).
-  taskFinished: (project, partner, ms, app = null) => finishTask(String(project), dexId(partner), Number(ms) || 0, app),
+  // `branch`: the git branch the turn ran on, when the app knows it.
+  taskFinished: (project, partner, ms, app = null, branch = null) => finishTask(String(project), dexId(partner), Number(ms) || 0, app, branch ? String(branch) : null),
   subTaskFinished: (project, partner) => finishSubTask(String(project), dexId(partner)),
   unblocked: (project, ms) => unblocked(String(project), Number(ms) || 0),
   // Opening an agent no longer catches its partner; kept so older clients don't error.
