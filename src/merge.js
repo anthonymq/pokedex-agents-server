@@ -1,0 +1,46 @@
+// Two saves made one: the server's and another app's (Herdr's shared.json), each earned on its
+// own agents. Counts add up, sets join, and for a choice both made (a partner) `theirs` wins.
+import { GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+
+const sumBy = (a = {}, b = {}) => {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = (out[k] ?? 0) + v;
+  return out;
+};
+const union = (a = [], b = []) => [...new Set([...a, ...b])];
+
+function mergeGame(a = {}, b = {}) {
+  const sa = a.streak ?? { last: null, days: 0, best: 0 }, sb = b.streak ?? { last: null, days: 0, best: 0 };
+  const later = (sb.last ?? "") > (sa.last ?? "") ? sb : sa;
+  // The earlier of two entries for the same Pokemon is when it was really first caught.
+  const dex = { ...(b.dex ?? {}) };
+  for (const [id, e] of Object.entries(a.dex ?? {})) if (!dex[id] || e.at < dex[id].at) dex[id] = e;
+  const recentLen = Math.max(a.recent?.length ?? 0, b.recent?.length ?? 0);
+  return {
+    ...b, ...a,
+    xp: sumBy(a.xp, b.xp),
+    tasks: (a.tasks ?? 0) + (b.tasks ?? 0),
+    subtasks: (a.subtasks ?? 0) + (b.subtasks ?? 0),
+    evolutions: (a.evolutions ?? 0) + (b.evolutions ?? 0),
+    streak: { ...later, best: Math.max(sa.best ?? 0, sb.best ?? 0) },
+    badges: union(a.badges, b.badges),
+    shiny: union(a.shiny, b.shiny),
+    encounter: null,
+    encounters: sumBy(a.encounters, b.encounters),
+    recent: [...(a.recent ?? []), ...(b.recent ?? [])].sort((x, y) => y.at - x.at).slice(0, recentLen),
+    dex,
+    bag: sumBy(a.bag, b.bag),
+    fainted: { ...(b.fainted ?? {}), ...(a.fainted ?? {}) },
+    quests: a.quests ?? b.quests ?? null,
+  };
+}
+
+// `mine` and `theirs` hold the save keys (GAME, CAUGHT, PARTNERS, PROJECTS); returns the merged ones.
+export function mergeSaves(mine, theirs) {
+  return {
+    [GAME]: mergeGame(mine[GAME], theirs[GAME]),
+    [CAUGHT]: union(mine[CAUGHT], theirs[CAUGHT]).sort((x, y) => x - y),
+    [PARTNERS]: { ...(mine[PARTNERS] ?? {}), ...(theirs[PARTNERS] ?? {}) },
+    [PROJECTS]: { ...(mine[PROJECTS] ?? {}), ...(theirs[PROJECTS] ?? {}) },
+  };
+}

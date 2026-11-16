@@ -1,0 +1,10 @@
+{
+  "name": "pokedex-agents-server",
+  "version": "0.1.0",
+  "description": "The Pokedex game for coding agents: rules, save and a local HTTP/WebSocket API shared by pokemon-rex and pokemon-herdr.",
+  "type": "module",
+  "private": true,
+  "bin": { "pokedex-agents-server": "bin/pokedex-agents-server.js" },
+  "scripts": { "start": "bun bin/pokedex-agents-server.js", "test": "bun test" },
+  "license": "Apache-2.0"
+}
