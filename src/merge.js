@@ -9,6 +9,14 @@ const sumBy = (a = {}, b = {}) => {
 };
 const union = (a = [], b = []) => [...new Set([...a, ...b])];
 
+// Days add up field by field; recent turn lengths are joined.
+function mergeStats(a, b) {
+  if (!a && !b) return undefined;
+  const days = { ...(a?.days ?? {}) };
+  for (const [k, d] of Object.entries(b?.days ?? {})) days[k] = sumBy(days[k], d);
+  return { days, lengths: [...(a?.lengths ?? []), ...(b?.lengths ?? [])].slice(-200) };
+}
+
 function mergeGame(a = {}, b = {}) {
   const sa = a.streak ?? { last: null, days: 0, best: 0 }, sb = b.streak ?? { last: null, days: 0, best: 0 };
   const later = (sb.last ?? "") > (sa.last ?? "") ? sb : sa;
@@ -32,6 +40,9 @@ function mergeGame(a = {}, b = {}) {
     bag: sumBy(a.bag, b.bag),
     fainted: { ...(b.fainted ?? {}), ...(a.fainted ?? {}) },
     quests: a.quests ?? b.quests ?? null,
+    // An unversioned save is version 1; the server upgrades the result after the merge.
+    version: Math.max(a.version ?? 1, b.version ?? 1),
+    stats: mergeStats(a.stats, b.stats),
   };
 }
 

@@ -241,3 +241,27 @@ describe("quests and ranks", () => {
     expect(G.game().badges).toEqual(expect.arrayContaining(["earth", "champion"]));
   });
 });
+
+describe("save versions and local stats", () => {
+  test("a version 1 save is upgraded to the current version with empty stats", () => {
+    herdr.state[G.GAME] = { tasks: 3, xp: { p: 40 } };
+    expect(G.migrateSave()).toBe(G.SAVE_VERSION);
+    expect(herdr.state[G.GAME]).toMatchObject({ tasks: 3, version: 2, stats: { days: {}, lengths: [] } });
+  });
+
+  test("a save newer than the rules is left alone", () => {
+    herdr.state[G.GAME] = { version: 99, tasks: 1 };
+    expect(G.migrateSave()).toBe(99);
+    expect(herdr.state[G.GAME]).toEqual({ version: 99, tasks: 1 });
+  });
+
+  test("finished turns and encounters are counted per day", () => {
+    G.finishTask("p", 1, 120000);
+    G.finishTask("p", 1, 360000);
+    roll(0.01); // an encounter, then a catch
+    G.finishTask("p", 1, 60000);
+    expect(G.throwBall()).toBe("caught");
+    const s = G.localStats();
+    expect(s).toMatchObject({ activeDays: 1, turnsPerDay: 3, turns: 3, medianTurnMs: 120000, seen: 1, caught: 1, fled: 0 });
+  });
+});

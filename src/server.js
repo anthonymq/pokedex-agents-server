@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, GAME, CAUGHT, PARTNERS, PROJECTS } from "./game.js";
 import { mergeSaves } from "./merge.js";
 import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
 
@@ -55,6 +55,7 @@ const ACTIONS = {
     const mine = Object.fromEntries([GAME, CAUGHT, PARTNERS, PROJECTS].map((k) => [k, shared(k)]));
     for (const [k, v] of Object.entries(mergeSaves(mine, theirs ?? {}))) setShared(k, v);
     setShared("pokedex.merged", [...done, id]);
+    migrateSave();
     checkBadges();
     return "merged";
   },
@@ -64,6 +65,7 @@ const ACTIONS = {
     if (!keys.length) throw new Error("nothing to import");
     if (fs.existsSync(sharedFile)) fs.copyFileSync(sharedFile, `${sharedFile}.bak-${Date.now()}`);
     for (const k of keys) setShared(k, k === GAME ? { ...values[k], encounter: null } : values[k]);
+    migrateSave();
     checkBadges();
     return keys;
   },
@@ -73,7 +75,8 @@ const snapshot = () => ({ shared: allShared(), notes: notes() });
 
 export function startServer({ port = DEFAULT_PORT, log = console.log } = {}) {
   // A save edited while the server was down (restored, copied in) gets the badges it has earned.
-  locked(() => checkBadges());
+  // An older save is upgraded first.
+  locked(() => { migrateSave(); checkBadges(); });
   const streams = new Set();
   const sockets = new Set();
   const enc = new TextEncoder();
