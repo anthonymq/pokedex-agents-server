@@ -1,24 +1,107 @@
 # pokedex-agents-server
 
-The Pokedex game for coding agents, as one small local server. It holds the rules (XP, evolutions, wild encounters, badges, quests) and the save. The game's front ends, [pokemon-rex](https://github.com/anthonymq/pokemon-rex) and [pokemon-herdr](https://github.com/anthonymq/pokemon-herdr), are its clients: they report what their agents do and draw what the server sends back. Neither app depends on the other.
+**Your coding agents ship. Your Pokemon level up.**
 
-## Install
+This is the game server behind [pokemon-rex](https://github.com/anthonymq/pokemon-rex) and [pokemon-herdr](https://github.com/anthonymq/pokemon-herdr): a tiny local Bun process that turns the work your agents finish into XP, evolutions, wild encounters, badges and quests, and keeps one save for every app you play in.
+
+![A one-minute tour in Rex: partners, XP, an evolution, a wild Snorlax, the Kanto Dex and the trainer card](docs/demo.gif)
+
+Claude Code finishes a refactor: your Charmander gets 35 XP. Codex lands a commit: +20 more, and Charmander hits Lv 16 and evolves. A wild Snorlax wanders into the tall grass and waits for you, for a day, until you're done with what you're doing. You never stop working to play. The work *is* the play.
+
+---
+
+## Why a server?
+
+Because the game should be the same game wherever your agents run.
+
+```
+   pokemon-rex  ─┐                       ┌─> your save (one, shared)
+                 ├─ POST /call ─> server ─┤
+ pokemon-herdr  ─┘   <─ /ws, /events ─   └─> the rules (one copy)
+```
+
+- **One save, every app.** Catch a Pikachu in Rex, see it in Herdr a second later. Both apps follow the server live over WebSocket or server-sent events.
+- **One set of rules.** XP, odds, evolutions and quests are computed in one place (`src/game.js`). The apps only report what happened and draw what they're sent.
+- **The clock belongs to the server.** Today's quests and your live streak arrive with the state, so two apps can never disagree about what day it is.
+- **Nothing is lost while it's down.** Apps queue reports with the moment they happened, and the server counts them on their own day when it comes back.
+- **Your project names stay home.** The save holds hashed project keys, never a repo path. More on that [below](#your-save-and-your-privacy).
+- **Zero ops.** Nobody starts it by hand: the first app that needs it starts it, and a second copy just exits.
+
+---
+
+## Quick start
 
 You need [Bun](https://bun.sh).
 
 ```sh
-git clone <this repo> ~/.local/share/pokedex-agents-server
+git clone https://github.com/anthonymq/pokedex-agents-server.git ~/.local/share/pokedex-agents-server
 ```
 
-You don't start it yourself: the first app that needs the server and can't reach it starts it. Starting it twice is harmless, because the second copy finds the port taken and exits. The apps look for it in `$POKEDEX_SERVER_DIR`, then `~/.local/share/pokedex-agents-server`, then `~/workspace-perso/pokedex-agents-server`. To run it by hand:
+That's it. Install [pokemon-rex](https://github.com/anthonymq/pokemon-rex) or [pokemon-herdr](https://github.com/anthonymq/pokemon-herdr) (or both) and they'll start the server when they need it. They look for it in `$POKEDEX_SERVER_DIR`, then `~/.local/share/pokedex-agents-server`, then `~/workspace-perso/pokedex-agents-server`.
+
+To run it yourself:
 
 ```sh
-bun bin/pokedex-agents-server.js
+bun bin/pokedex-agents-server.js   # or: bun start
 ```
+
+It listens on `127.0.0.1:7151`, and only there.
+
+---
+
+## The game in one screen
+
+![pokemon-herdr: agents at work beside their Pokemon partners](docs/herdr-hero.png)
+
+| Your agents... | ...and the game |
+| --- | --- |
+| finish a task | **10 XP + 5 per minute it ran**, up to 50, to your party's lead. The rest of the party trains at the Day Care for 25%. |
+| make a commit / go green / get merged | **+20 / +30 / +50 XP**, and a merge drops an Ultra Ball. Once per kind per turn. |
+| cross a level | Pokemon **evolve at their real Gen 1 levels**. Magikarp makes you wait until 20. Stones and a Link Cable handle the rest. |
+| finish work while a wild Pokemon waits | 15% of finished tasks bring a **wild Pokemon** to the tall grass (up to 5, a day each). Every task you finish meanwhile weakens it. |
+| keep you waiting | Answer a blocked agent within 2 minutes and its project's next task earns **+25% XP**. In hard mode, ignore it for 10 and its mascot faints. |
+| keep showing up | An **active-day streak**: 5 of every 7 days keeps it, so weekends are free. At 7 days new catches can be **shiny** (1 in 8), at 30 days 1 in 4. |
+| take a holiday | **Rested XP**: each extra day off banks a day of your average XP, and XP counts double until it's spent. |
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/wild-encounter.png" alt="A wild Snorlax appeared over the workspace, with catch odds for each ball"></td>
+    <td width="50%"><img src="docs/sidebar.png" alt="The Pokedex sidebar beside two Claude Code panes: projects, their partner Pokemon and what each agent is doing"></td>
+  </tr>
+  <tr>
+    <td><b>A wild Pokemon appears</b> once your agents finish their work. Every task done while it waits weakens it, so the odds climb.</td>
+    <td><b>Your agents, as Pokemon.</b> Each project has a partner, and you can see at a glance which agent is working, done or waiting on you.</td>
+  </tr>
+</table>
+
+And on top of that:
+
+- **Quests sized to you.** Three daily and one weekly, with Bronze / Silver / Gold at 50% / 100% / 150% of *your own* median over the last two weeks. A quiet week asks less, a heavy one asks more, and every tier pays.
+- **Eight Kanto badges** (Boulder to Earth), then the Elite Four at 1,000 tasks and Champion with all eight.
+- **Gifts** at trainer levels 5, 10, 15, 20 and 30: Eevee, Lapras, a fossil, a Hitmon, Porygon.
+- **Fair across repos.** One repo or ten, the day pays the same: turns 1-5 in full, 6-20 at 40%, 21-50 at 10%, then 3%.
+- **Shareable.** `POST /share` writes a post for X and puts a pixel-art trainer card on your clipboard. It shows Pokemon, levels and totals, never a project name.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/trainer-card.png" alt="The trainer card: stats, recent catches, badges, quests, bag and partners"></td>
+    <td width="50%"><img src="docs/kanto-dex.png" alt="The Kanto Dex: a searchable grid of caught Pokemon with their sprites"></td>
+  </tr>
+  <tr>
+    <td><b>The trainer card</b>: your level, streak and catch rate, today's quests and their tiers, the badges you've earned, your bag.</td>
+    <td><b>The Kanto Dex</b>: all 151, searchable. Each catch remembers how, where and when you got it. Shinies get a gold mark.</td>
+  </tr>
+</table>
+
+![The share card POST /share renders: the lead Pokemon, 38/151 caught, trainer level, tasks, streak, badges and the team](docs/share-card.png)
+
+<sub>The share card, drawn by the server itself (`src/share.js`) as a 1200x675 PNG, the size X previews whole.</sub>
+
+---
 
 ## API
 
-It listens on `127.0.0.1:7151` only. To change the port, set `POKEDEX_PORT`, or `"port"` in `config.json` in the state folder.
+Everything is plain HTTP and JSON on `127.0.0.1:7151`. Change the port with `POKEDEX_PORT`, or `"port"` in `config.json` in the state folder.
 
 | Route | What it does |
 | --- | --- |
@@ -27,41 +110,78 @@ It listens on `127.0.0.1:7151` only. To change the port, set `POKEDEX_PORT`, or 
 | `GET /ws` | the same, as WebSocket text messages |
 | `GET /version` | `{ rules, save }`: the versions of the rules and the save this server runs |
 | `POST /call` | `{ action, args, origin, session, at? }` returns `{ ok, value }` or `{ ok: false, error }` |
+| `POST /share` | `{ sprites? }` returns `{ ok, text, url, card, copied }`: a post for X, its card as a PNG (on the macOS clipboard when it can) |
 
-Actions: `taskFinished`, `subTaskFinished`, `result(project, kind)`, `unblocked`, `throwBall(ball, index)`, `runAway(index)`, `digest`, `setOption(key, value)`, `chooseStarter(id)`, `setParty(ids)`, `setLead(id)`, `claimGift(tr, id)`, `useItem(id, item)`, `rerollQuest(id)`, `seen(key)`, `setPartner`, `savePartners`, `resolveProject`, `release`, `setSort`, `merge`, `import`. `origin` ("rex", "herdr") and `session` are stored on the news a call causes, so the app that caused it can show it.
+**Actions:** `taskFinished`, `subTaskFinished`, `result(project, kind)`, `unblocked`, `throwBall(ball, index)`, `runAway(index)`, `digest`, `setOption(key, value)`, `chooseStarter(id)`, `setParty(ids)`, `setLead(id)`, `claimGift(tr, id)`, `useItem(id, item)`, `rerollQuest(id)`, `seen(key)`, `setPartner`, `savePartners`, `resolveProject`, `release`, `setSort`, `merge`, `import`. `origin` (`"rex"`, `"herdr"`) and `session` are stored on the news a call causes, so the app that caused it can show it.
 
-- `view` holds what the clock decides, so an app never shows it from an older or newer copy of the rules: `quests` (today's three and this week's one, with their progress), `streak`, and `rules` and `save`, the versions also served by `/version`. The state is sent again when the day turns, even if nothing was written. An app whose `RULES_VERSION` differs from the server's warns about it.
-- `at` is when an agent event happened, in milliseconds: an app that couldn't reach the server queues the report and sends it later with its own time, and the rules count it on that day. More than 3 days late and it no longer counts. Only `taskFinished`, `subTaskFinished`, `unblocked` and `result` take it.
-- Reports are capped so a buggy or dishonest app can't inflate the game: a turn counts for at most 6 hours, and each kind for at most 30 to 60 reports a minute, counted by when they happened (a replayed queue isn't refused).
-- Wild Pokemon wait in the tall grass (`wild` in the save, up to 5, a day each); `index` picks one, the oldest by default. A new one is news, never a popup: clients alert only when `shouldAlert()` allows it.
-- `setOption`: `alert` is `off`, `on` or `smart` (the default: only while no agent is busy); `hardMode` turns fainting on. Without it, answering a blocked agent within 2 minutes makes its project's next task earn 25% more XP.
-- Small news (level-ups, items, quests) is marked `quiet`; `digest` sends one "Welcome back!" summary of it, as does the first turn after 2 hours away.
-- XP belongs to one party (`party`, up to 6, the first leads; `pokemon` holds each one's XP), not to projects: every award goes to the lead wherever the work happened, and 25% to the rest of the party (Day Care). A project's entry in `pokedex.partners` is only its mascot (`setPartner`). Before a starter is chosen (`chooseStarter`: 1, 4 or 7), XP waits in `bank`.
-- A turn earns 10 XP + 5 per minute, up to 50; `result` adds +20 for a commit, +30 for green tests/CI, +50 and an Ultra Ball for a merge, once per kind per turn. The day's turns 1-5 pay in full, 6-20 40%, 21-50 10%, the rest 3%.
-- The trainer level is floor(sqrt(lifetime XP / 40)). Gifts come at trainer levels 5 (Eevee), 10 (Lapras), 15 (Omanyte or Kabuto), 20 (Hitmonlee or Hitmonchan) and 30 (Porygon); a choice waits for `claimGift`.
-- Quests are sized to the player: three daily (always a task quest) and one weekly, each with Bronze / Silver / Gold at 50% / 100% / 150% of their own median over the 14 days before, never under a minimum. Every tier pays (Bronze a Great Ball, Gold an Ultra Ball and 50 PokeDollars; the weekly one pays Ultra Balls, a stone and 200). A quest is only offered when the best of the last 30 days would have reached its Bronze, and `rerollQuest` swaps one that hasn't paid for another, once a day.
-- The streak counts days, not amount: a day keeps it when 5 of the 7 days ending with it were active, so any two days off a week are fine. A **Streak Freeze**, earned every 7 active days (2 at most), is spent by itself on a missing day that would break it. The Rainbow badge needs a 2-week streak and Volcano an 8-week one.
-- **Rested XP**: each day off beyond the two a week a streak allows banks one day of the player's average XP, up to 3 days of it, and XP counts double until the bank is spent. A usual weekend banks nothing.
-- A new save gets Professor Oak's five first steps (`tutorial`); finishing them pays 5 Poke Balls. The bag holds Poke Balls too, thrown once an encounter's free three run out.
+<details>
+<summary><b>The details apps rely on</b></summary>
+
+- **`view`** holds what the clock decides: `quests` (today's three and this week's one, with their progress), `streak` (the live streak, in active days), `week` (the active days among the last 7, what the apps show out of 5 while the streak is 0), and `rules` and `save`, the versions also served by `/version`. The state is sent again when the day turns, even when nothing was written. An app whose `RULES_VERSION` differs from the server's warns about it.
+- **`at`** is when an agent event happened, in milliseconds. An app that couldn't reach the server queues the report and sends it later with its own time, and the rules count it on that day. More than 3 days late and it no longer counts. Only `taskFinished`, `subTaskFinished`, `unblocked` and `result` take it.
+- **Reports are capped**, so a buggy or dishonest app can't inflate the game: a turn counts for at most 6 hours, and each kind for at most 30 to 60 reports a minute, counted by when they happened (a replayed queue isn't refused).
+- **Wild Pokemon** wait in the tall grass (`wild` in the save). `index` picks one, the oldest by default. A new one is news, never a popup: clients alert only when `shouldAlert()` allows it.
+- **`setOption`**: `alert` is `off`, `on` or `smart` (the default: only while no agent is busy); `hardMode` turns fainting on.
+- **Small news** (level-ups, items, quests) is marked `quiet`. `digest` sends one "Welcome back!" summary of it, as does the first turn after 2 hours away.
+- **XP belongs to the party** (`party`, up to 6, the first leads; `pokemon` holds each one's XP), not to projects. A project's entry in `pokedex.partners` is only its mascot (`setPartner`). Before a starter is chosen (`chooseStarter`: 1, 4 or 7), XP waits in `bank`.
+- **Levels:** a Pokemon's level *n* costs `4 × n²` XP (Lv 16 at 1,024, Lv 100 at 40,000). The trainer level is `floor(sqrt(lifetime XP / 40))`.
+- **Quests** are only offered when the best of the last 30 days would have reached their Bronze. `rerollQuest` swaps one that hasn't paid for another, once a day. Daily tiers pay a Great Ball, two, then an Ultra Ball and 50 PokeDollars; the weekly one pays Ultra Balls, the week's stone and 200.
+- **Streak Freezes** are earned every 7 active days (2 at most) and spend themselves on a missing day that would break the streak. Rainbow needs a 2-week streak, Volcano an 8-week one.
+- **Professor Oak** gives a new save five first steps (`tutorial`); finishing them pays 5 Poke Balls.
 - **PokeDollars** (`money`) add up from Gold quests. Nothing spends them yet.
-- `catch` only works when the server runs with `POKEDEX_DEBUG=1`. `met` is gone (it's accepted and does nothing): opening an agent no longer catches its partner.
+- **`catch`** only works when the server runs with `POKEDEX_DEBUG=1`. `met` is gone (it's accepted and does nothing).
+
+</details>
+
+---
+
+## Your save and your privacy
+
+The save lives in `~/.local/state/pokedex-agents-server/` (`POKEDEX_STATE` moves it). The first start copies over the save pokemon-rex kept in `~/.local/state/rex-pokedex/`.
+
+Your agents work in real repos, and some of them are probably your employer's. So the save never learns their names:
+
+- Every project key is a **keyed hash** (`p:` and 16 hex digits), made at the boundary (`src/keys.js`) with the key in `secret`.
+- The readable names (repo paths, Herdr space names, short labels) live beside the save in **`local.json`**. The apps get them with the state, so a card can still say `my-app` while the save only knows `p:3f9c…`.
+- An export, an import or a merge never carries `secret` or `local.json`. They are the two files never to copy anywhere shared. Losing `secret` only costs your projects their mascots: they get new keys.
+- The X post and the share card show Pokemon, levels and totals. Never a project.
+
+---
 
 ## Balancing
 
-`bun scripts/simulate.js` plays the rules for three personas (casual, regular, pro) over a year and prints when each milestone lands, plus a repo-neutrality check. `--check` exits 1 when a shipped phase's target is missed: repo neutrality, no forced interruptions, the casual player seeing 90% of their encounters and finishing a quest on 80% of their active days, the pro reaching Gold on at most 40% of them, the regular player's first evolution on days 2-3, the casual player's within week 1, and the pro's first Lv100 no sooner than day 60.
+The numbers aren't vibes. `bun scripts/simulate.js` plays the rules for three personas (casual, regular, pro) over a year and prints when each milestone lands, plus a repo-neutrality check. `--check` exits 1 when a target is missed:
 
-## State
+- one repo or ten earns the same,
+- no forced interruptions,
+- the casual player sees 90% of their encounters and finishes a quest on 80% of their active days,
+- the pro reaches Gold on at most 40% of theirs,
+- the regular player's first evolution lands on days 2-3, the casual player's within week 1,
+- and the pro's first Lv 100 comes no sooner than day 60.
 
-The save lives in `~/.local/state/pokedex-agents-server/` (`POKEDEX_STATE` overrides it). The first start copies over the save pokemon-rex kept in `~/.local/state/rex-pokedex/`.
+---
 
-Project keys in the save are keyed hashes (`p:` and 16 hex digits), so it holds no repo path, machine name, Herdr space name or branch name: an action that names a project is hashed at the boundary (`src/keys.js`) with the key in `secret`, and the readable names live beside the save in `local.json` (a space name to its repo, a readable key to the save's key, and the save's key to a short label). The apps get them with the state, so they can still show "eot-app" on a card while the save only knows the hash. Neither file is part of the save: an export, an import or a merge never carries them, and `secret` and `local.json` are the two files never to copy anywhere shared. Losing `secret` only costs the projects their mascots: they get new keys.
-
-## Shared code
-
-The apps keep copies of `src/game.js` and `src/pokemon.js` for read-only helpers (levels, names, odds). Each app's `scripts/sync-game.sh` refreshes its copies from here, and `--check` reports any that differ.
-
-## Tests
+## Develop
 
 ```sh
 bun test
 ```
+
+The tests start a server on a free port with its state in a temp folder, so they never touch your save. For your own experiments do the same: start an isolated server with `POKEDEX_STATE=<tmp dir> POKEDEX_PORT=7199` set in the shell that runs it.
+
+| File | |
+| --- | --- |
+| `src/game.js` | the rules: XP, evolutions, encounters, badges, quests, streaks |
+| `src/pokemon.js` | the 151 names |
+| `src/server.js` | the HTTP and WebSocket API |
+| `src/store.js` | the save and its lock |
+| `src/merge.js` | merging two saves |
+| `src/keys.js` | project key hashing |
+| `src/share.js` | the X post and the share-card PNG |
+| `scripts/simulate.js` | the year-long balancing simulation |
+
+The apps keep read-only copies of `src/game.js` and `src/pokemon.js` for their helpers (levels, names, odds). Change the rules here, bump `RULES_VERSION` when what they compute changes, then run `scripts/sync-game.sh` in each app (`--check` reports a copy that differs). The running server picks up new code after a restart.
+
+---
+
+Apache-2.0. Pokemon names and artwork are third-party and not covered by this license; see [NOTICE.md](NOTICE.md).
