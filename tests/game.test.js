@@ -329,6 +329,8 @@ describe("blocked agents", () => {
 });
 
 describe("quests and ranks", () => {
+  afterEach(() => setSystemTime());
+
   test("a new player gets the task quests at their minimums, daily and weekly", () => {
     withParty([1]);
     const qs = G.quests();
@@ -351,6 +353,9 @@ describe("quests and ranks", () => {
   });
 
   test("a quiet player keeps the minimums, and only quests the last 30 days show possible are offered", () => {
+    // A Monday: the week's quest is sized from the 14 days before the week starts, so the history
+    // (the 14 days before today) lines up with it only then.
+    setSystemTime(new Date(2027, 0, 11, 10));
     withParty([1]);
     withHistory(14, { turns: 2 });
     expect(G.quests().map((q) => [q.id, q.needs])).toEqual([["d-tasks", [2, 3, 5]], ["w-tasks", [7, 14, 21]]]);
