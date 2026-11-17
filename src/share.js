@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { BADGES, trainerLevel, liveStreak, levelOf, nameOf } from "./game.js";
+import { BADGES, trainerLevel, liveStreak, liveWeek, levelOf, nameOf, STREAK_NEED } from "./game.js";
 
 const KANTO = BADGES.filter((b) => !b.rank);
 export const SITE = "https://github.com/anthonymq/pokedex-agents-server";
@@ -220,7 +220,9 @@ export function renderCard(g, caught, partners, sprites) {
   c.rect(X0, 200, Math.round((RW * caught.length) / 151), 16, hex("#71d5df"));
 
   const streak = liveStreak(g);
-  const stats = [["TRAINER LV", trainerLevel(g)], ["TASKS", g.tasks], ["STREAK", `${streak}D`]];
+  // A streak shows its days; until one starts, the week's active days toward it.
+  const third = streak ? ["STREAK", `${streak} DAY${streak > 1 ? "S" : ""}`] : ["THIS WEEK", `${liveWeek(g)}/${STREAK_NEED}`];
+  const stats = [["TRAINER LV", trainerLevel(g)], ["TASKS", g.tasks], third];
   const sw = Math.floor((RW - 24) / 3);
   stats.forEach(([label, value], i) => {
     const x = X0 + i * (sw + 12);

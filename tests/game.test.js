@@ -529,6 +529,14 @@ describe("streaks", () => {
     expect(G.game().streak).toMatchObject({ days: 0, best: 5, freezes: 0 });
   });
 
+  test("until a streak starts, the week counts the active days among the last 7", () => {
+    onDays([4, 5], () => G.finishTask("p", 1, 0)); // Monday and Tuesday
+    expect(G.liveStreak(G.game())).toBe(0);
+    expect(G.liveWeek(G.game())).toBe(2);
+    setSystemTime(new Date(2027, 0, 11, 10)); // the next Monday: last Monday has left the window
+    expect(G.liveWeek(G.game())).toBe(1);
+  });
+
   test("a Streak Freeze, earned every 7 active days, covers a missed day", () => {
     onDays([4, 5, 6, 7, 8, 11, 12], () => G.finishTask("p", 1, 0)); // 7 active days
     expect(G.game().streak.freezes).toBe(1);

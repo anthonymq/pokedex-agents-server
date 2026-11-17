@@ -88,7 +88,7 @@ test("the state carries what the apps draw from the clock, and the rules' versio
   const version = await (await fetch(`${base}/version`)).json();
   expect(version).toEqual({ rules: expect.any(Number), save: expect.any(Number) });
   const { view } = await (await fetch(`${base}/state`)).json();
-  expect(view).toMatchObject({ rules: version.rules, save: version.save, streak: expect.any(Number) });
+  expect(view).toMatchObject({ rules: version.rules, save: version.save, streak: expect.any(Number), week: expect.any(Number) });
   expect(view.quests.some((q) => q.id === "d-tasks")).toBe(true);
 });
 
