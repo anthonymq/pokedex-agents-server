@@ -255,7 +255,23 @@ export function renderCard(g, caught, partners, sprites) {
 
 // Puts a PNG file on the macOS clipboard. Elsewhere (or when it fails) the card stays a file.
 export async function copyImage(file) {
-  if (process.platform !== "darwin" || process.env.POKEDEX_NO_CLIPBOARD) return false;
-  const proc = Bun.spawn(["osascript", "-e", `set the clipboard to (read (POSIX file ${JSON.stringify(file)}) as «class PNGf»)`], { stdout: "ignore", stderr: "pipe" });
-  return (await proc.exited) === 0;
+  if (process.env.POKEDEX_NO_CLIPBOARD) return false;
+  if (process.platform === "darwin") {
+    const proc = Bun.spawn(["osascript", "-e", `set the clipboard to (read (POSIX file ${JSON.stringify(file)}) as «class PNGf»)`], { stdout: "ignore", stderr: "pipe" });
+    return (await proc.exited) === 0;
+  }
+  if (process.platform !== "linux") return false;
+  // Wayland, then X11: whichever is installed and has a display.
+  const tries = [
+    process.env.WAYLAND_DISPLAY && ["wl-copy", "--type", "image/png"],
+    process.env.DISPLAY && ["xclip", "-selection", "clipboard", "-t", "image/png", "-i"],
+  ].filter(Boolean);
+  for (const cmd of tries) {
+    if (!Bun.which(cmd[0])) continue;
+    try {
+      const proc = Bun.spawn(cmd, { stdin: Bun.file(file), stdout: "ignore", stderr: "ignore" });
+      if ((await proc.exited) === 0) return true;
+    } catch {}
+  }
+  return false;
 }

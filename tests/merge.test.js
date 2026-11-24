@@ -31,3 +31,8 @@ test("counts add up, sets join, the earlier dex entry and the later streak are k
   expect(m[P]).toEqual({ a: 4, shared: 9 });
   expect(m[PR]).toEqual({ space: "/repo" });
 });
+
+test("a null game on either side is an empty one", () => {
+  expect(mergeSaves({ [G]: { tasks: 2 } }, { [G]: null })[G].tasks).toBe(2);
+  expect(mergeSaves({ [G]: null }, { [G]: { tasks: 3 } })[G].tasks).toBe(3);
+});

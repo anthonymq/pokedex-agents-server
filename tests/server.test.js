@@ -139,6 +139,19 @@ test("a merge awards the badges the joined progress has earned", async () => {
   expect(shared(GAME).badges).toContain("cascade");
 });
 
+test("a fresh app's empty save (null keys) is recorded as merged, changing nothing", async () => {
+  setShared(GAME, { tasks: 7, badges: [] });
+  setShared("pokedex.merged", []);
+  const before = saveFile();
+  expect(await call("merge", "fresh", { [GAME]: null, [CAUGHT]: null })).toEqual({ ok: true, value: "nothing to merge" });
+  expect(shared(GAME).tasks).toBe(7);
+  expect(shared("pokedex.merged")).toEqual(["fresh"]);
+  expect(JSON.parse(saveFile())[GAME]).toEqual(JSON.parse(before)[GAME]);
+  // Recorded, so the same app's later copy of the server's save is never added on top.
+  expect(await call("merge", "fresh", { [GAME]: { tasks: 7 } })).toEqual({ ok: true, value: "already merged" });
+  expect(shared(GAME).tasks).toBe(7);
+});
+
 test("/share returns an X post with the totals and writes a readable card", async () => {
   setShared(CAUGHT, [1, 4, 7, 25]);
   setShared(GAME, { tasks: 12, badges: ["boulder"], shiny: [25] });

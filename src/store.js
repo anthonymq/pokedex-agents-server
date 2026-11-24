@@ -130,16 +130,24 @@ export function notify(note) {
     // `quiet`: small news (level-ups, items, quests) that clients list but don't pop up.
     id: Number(/(\d+)\.png$/.exec(icon ?? "")?.[1]) || null, encounter: !!note.action, quiet: !!note.quiet,
     icon, action: note.action ?? null, timeout: note.timeout ?? null, origin: caller.origin, session: caller.session,
+    ...(pendingSound ? { sound: pendingSound } : {}),
   };
+  pendingSound = null;
   writeJson(NOTES_FILE, [...notes().filter((n) => Date.now() - n.at < 86400000), entry].slice(-30));
   return "note";
 }
 
-// The two jingles (evolution, badge) play on this machine, for whichever app caused them.
+// The two jingles (evolution, badge) play on this machine, for whichever app caused them. Without
+// afplay (Linux, Windows) the note that follows the jingle carries it as `sound`, for the app to play.
 const SOUNDS = new Set(["evolve.mp3", "badge.mp3"]);
+let pendingSound = null;
 export function playSound(file) {
   const name = path.basename(String(file ?? ""));
-  if (!SOUNDS.has(name) || process.platform !== "darwin" || !settings().sounds.enabled) return null;
+  if (!SOUNDS.has(name) || !settings().sounds.enabled) return null;
+  if (process.platform !== "darwin") {
+    pendingSound = name;
+    return null;
+  }
   try {
     Bun.spawn(["afplay", path.join(ROOT, "assets", "sounds", name)], { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref();
   } catch {}

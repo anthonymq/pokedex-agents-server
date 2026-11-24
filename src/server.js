@@ -111,12 +111,18 @@ const ACTIONS = {
     if (Object.keys(fresh).length) setShared(PARTNERS, { ...partners, ...fresh });
   },
   // Another save joined into this one, once (see merge.js); `id` names it so a second try does nothing.
+  // An app with nothing saved (keys missing or null) is only recorded, so it never merges later.
   merge: (id, theirs) => {
     const done = shared("pokedex.merged") ?? [];
     if (done.includes(id)) return "already merged";
+    theirs = Object.fromEntries(Object.entries(theirs ?? {}).filter(([, v]) => v != null));
+    if (!Object.keys(theirs).length) {
+      setShared("pokedex.merged", [...done, id]);
+      return "nothing to merge";
+    }
     if (fs.existsSync(sharedFile)) fs.copyFileSync(sharedFile, `${sharedFile}.bak-${Date.now()}`);
     const mine = Object.fromEntries([GAME, CAUGHT, PARTNERS, PROJECTS].map((k) => [k, shared(k)]));
-    for (const [k, v] of Object.entries(mergeSaves(mine, theirs ?? {}))) setShared(k, v);
+    for (const [k, v] of Object.entries(mergeSaves(mine, theirs))) setShared(k, v);
     setShared("pokedex.merged", [...done, id]);
     migrateSave();
     hashSave();

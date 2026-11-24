@@ -17,7 +17,9 @@ function mergeStats(a, b) {
   return { days, lengths: [...(a?.lengths ?? []), ...(b?.lengths ?? [])].slice(-200) };
 }
 
-function mergeGame(a = {}, b = {}) {
+function mergeGame(a, b) {
+  a ??= {};
+  b ??= {};
   const sa = a.streak ?? { last: null, days: 0, best: 0 }, sb = b.streak ?? { last: null, days: 0, best: 0 };
   const later = (sb.last ?? "") > (sa.last ?? "") ? sb : sa;
   // The earlier of two entries for the same Pokemon is when it was really first caught.
