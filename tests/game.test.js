@@ -178,6 +178,14 @@ describe("evolution, jingles and badges", () => {
     expect(herdr.sounds).toEqual(["mods/pokedex-agents/sounds/evolve.mp3"]); // the badge stays quiet
   });
 
+  test("projects whose mascot evolved show the new form; other mascots stay", () => {
+    withParty([52], { 52: 3100 });
+    herdr.state[G.PARTNERS] = { a: 52, b: 52, c: 25 };
+    G.finishTask("p", 1, 600000); // +50 XP -> Lv28: Meowth -> Persian
+    expect(G.game().party).toEqual([53]);
+    expect(herdr.state[G.PARTNERS]).toEqual({ a: 53, b: 53, c: 25 });
+  });
+
   test("a badge on its own plays the badge jingle", () => {
     herdr.state[G.CAUGHT] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     G.recordCatches([10]);
