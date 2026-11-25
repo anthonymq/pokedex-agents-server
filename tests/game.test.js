@@ -167,14 +167,15 @@ describe("project keys", () => {
 });
 
 describe("evolution, jingles and badges", () => {
-  test("reaching the evolution level evolves, keeps the XP, catches, plays one jingle and earns Thunder", () => {
-    withParty([4, 7], { 4: 1000 });
+  test("reaching the evolution level evolves, keeps the XP, catches, and one jingle covers a badge earned with it", () => {
+    // Brock's fifth active day comes with the evolution.
+    withParty([4, 7], { 4: 1000 }, { gyms: { at: 0, since: "2027-01-01", need: [[5]], c: { days: 4 } } });
     G.finishTask("p", 1, 600000); // +50 XP -> Lv16: Charmander -> Charmeleon
     expect(G.game().party).toEqual([5, 7]);
     expect(G.game().pokemon[5]).toBe(1050);
     expect(herdr.state[G.CAUGHT]).toEqual([4, 5, 7]);
     expect(G.game().recent.map((r) => r.id)).toEqual([5]);
-    expect(G.game().badges).toContain("thunder");
+    expect(G.game().badges).toContain("boulder");
     expect(herdr.sounds).toEqual(["mods/pokedex-agents/sounds/evolve.mp3"]); // the badge stays quiet
   });
 
@@ -187,8 +188,8 @@ describe("evolution, jingles and badges", () => {
   });
 
   test("a badge on its own plays the badge jingle", () => {
-    herdr.state[G.CAUGHT] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-    G.recordCatches([10]);
+    withParty([1], {}, { gyms: { at: 0, since: "2027-01-01", need: [[5]], c: { days: 4 } } });
+    G.finishTask("p", 1, 0);
     expect(G.game().badges).toEqual(["boulder"]);
     expect(herdr.sounds).toEqual(["mods/pokedex-agents/sounds/badge.mp3"]);
   });
@@ -386,15 +387,127 @@ describe("quests and ranks", () => {
     expect(() => G.rerollQuest(G.quests()[1].id)).toThrow();
   });
 
-  test("all eight Kanto badges make you Champion in the same save", () => {
-    herdr.state[G.GAME] = { badges: ["boulder", "cascade", "thunder", "rainbow", "soul", "marsh", "volcano"] };
-    herdr.state[G.CAUGHT] = Array.from({ length: 150 }, (_, i) => i + 1);
-    G.recordCatches([151]);
-    expect(G.game().badges).toEqual(expect.arrayContaining(["earth", "champion"]));
+  test("task counts are side medals, never badges", () => {
+    withParty([1], {}, { tasks: 49 });
+    G.finishTask("p", 1, 0);
+    expect(G.game().medals).toEqual(["tasks50"]);
+    expect(G.game().badges).toEqual([]);
+  });
+});
+
+describe("gyms and the Elite Four", () => {
+  const BADGE = "mods/pokedex-agents/sounds/badge.mp3";
+  const seq = (...xs) => { let i = 0; Math.random = () => xs[Math.min(i++, xs.length - 1)]; };
+
+  test("gyms open in order: Brock wants 5 active days, the first one included", () => {
+    withParty([1]);
+    onDays([4, 5, 6, 7], () => G.finishTask("p", 1, 0));
+    expect(G.gymView().gym.leader).toBe("Brock");
+    expect(G.gymView().gym.options[0].parts[0]).toMatchObject({ n: 4, need: 5 });
+    onDays([8], () => G.finishTask("p", 1, 0));
+    expect(G.game().badges).toEqual(["boulder"]);
+    expect(G.gymView().gym.leader).toBe("Misty");
+    expect(herdr.sounds).toEqual([BADGE]);
+  });
+
+  test("a gym's needs scale with the player's median when it opens, never under the minimum, and any option wins it", () => {
+    setSystemTime(new Date(2027, 0, 20, 10));
+    withParty([1], {}, { gyms: { at: 0, since: "2027-01-01", need: [[5]], c: { days: 5 } } });
+    withHistory(14, { fast: 10 });
+    G.recordCatches([25]); // any save: Brock is beaten, Misty opens
+    const misty = G.gymView().gym;
+    expect(misty.leader).toBe("Misty");
+    expect(misty.options.map((o) => o.parts[0].need)).toEqual([40, 12]); // 4 days of a 10/day median; the 12 minimum
+    for (let i = 0; i < 11; i++) G.unblocked("p", 10 * 60000);
+    expect(G.game().badges).toEqual(["boulder"]);
+    G.unblocked("p", 10 * 60000);
+    expect(G.game().badges).toEqual(["boulder", "cascade"]);
+  });
+
+  test("a Classic badge from before the gyms gives its gym a 50% head start", () => {
+    withParty([1], {}, { classic: ["boulder"] });
+    onDays([4], () => G.finishTask("p", 1, 0));
+    expect(G.gymView().gym.options[0].parts[0]).toMatchObject({ n: 4, need: 5 });
+    onDays([5], () => G.finishTask("p", 1, 0));
+    expect(G.game().badges).toEqual(["boulder"]);
+  });
+
+  test("the eighth badge opens the Elite Four, one member a week, and Lance makes a Champion with Mewtwo", () => {
+    setSystemTime(new Date(2027, 0, 4, 10)); // a Monday
+    withParty([1], {}, { badges: [...G.KANTO], gyms: { at: 8, since: "2027-01-01", need: [], c: {} } });
+    G.recordCatches([25]);
+    expect(G.game().badges).toContain("elite");
+    expect(G.gymView()).toMatchObject({ gym: null, league: { leader: "Lorelei", waiting: false } });
+    herdr.state[G.GAME].league.c = { silver: 3 };
+    G.recordCatches([26]);
+    expect(G.gymView().league).toMatchObject({ leader: "Bruno", waiting: true });
+    // Bruno's week is the next one: commits this week don't count.
+    const commits = () => { for (let i = 0; i < 5; i++) { G.finishTask("p", 1, 0); G.result("p", "commit"); } };
+    onDays([5], commits);
+    expect(G.gymView().league.leader).toBe("Bruno");
+    onDays([11], commits);
+    expect(G.gymView().league.leader).toBe("Agatha");
+    // A week that falls short is tried again the next one.
+    onDays([18], () => G.finishTask("p", 1, 0));
+    onDays([25], () => G.finishTask("p", 1, 0));
+    expect(G.gymView().league).toMatchObject({ leader: "Agatha", week: "2027-01-25" });
+    herdr.state[G.GAME].league = { at: 3, week: "2027-01-25", c: { weekly: 1 } };
+    G.recordCatches([27]);
+    const g = G.game();
+    expect(g.badges).toContain("champion");
+    expect(g.fame.party).toEqual([{ id: 1, level: expect.any(Number), shiny: false }]);
+    expect(g.wild[0]).toMatchObject({ id: 150, staying: true });
+    expect(G.gymView().league).toBe(null);
+  });
+
+  test("a legendary from a milestone never flees nor expires, and can't be left behind", () => {
+    setSystemTime(new Date(2027, 0, 4, 10));
+    withParty([1], {}, { wild: [{ id: 150, at: Date.now(), balls: 1, weak: 0, project: null, staying: true }] });
+    expect(G.throwBall("poke")).toBe("missed"); // its last free ball
+    expect(G.game().wild[0]).toMatchObject({ id: 150, balls: 3 });
+    G.runAway(0);
+    setSystemTime(new Date(2027, 1, 4, 10));
+    G.throwBall("great"); // none in the bag
+    expect(G.game().wild.map((e) => e.id)).toEqual([150]);
+    expect(G.throwRate(G.game().wild[0])).toBeCloseTo(0.35);
+  });
+
+  test("three weeks in a row with the weekly quest done bring a legendary bird", () => {
+    withParty([1]);
+    const fiveTasks = () => { for (let i = 0; i < 5; i++) G.finishTask("p", 1, 0); };
+    onDays([4, 11], fiveTasks);
+    expect(G.game().wild).toEqual([]);
+    onDays([18], fiveTasks);
+    expect(G.game().wild[0]).toMatchObject({ id: 144, staying: true });
+  });
+
+  test("Mew appears once the other 150 are caught", () => {
+    herdr.state[G.CAUGHT] = Array.from({ length: 149 }, (_, i) => i + 1);
+    G.recordCatches([150]);
+    expect(G.game().wild[0]).toMatchObject({ id: 151, staying: true });
+  });
+
+  test("the tall grass holds no legendary, and 40% of encounters are species not caught yet", () => {
+    withParty([1]);
+    herdr.state[G.CAUGHT] = Array.from({ length: 151 }, (_, i) => i + 1).filter((id) => id !== 133 && id !== 144);
+    seq(0.99, 0.1, 0.1, 0); // no stone, an encounter, from the missing ones (Eevee: Articuno never)
+    G.finishTask("p", 1, 0);
+    expect(G.game().wild.map((e) => e.id)).toEqual([133]);
+    seq(0.99, 0.1, 0.9, 143.5 / 151, 0); // the usual roll lands on Articuno: rolled again
+    G.finishTask("p", 1, 0);
+    expect(G.game().wild.map((e) => e.id)).toEqual([133, 1]);
   });
 });
 
 describe("save versions and local stats", () => {
+  test("version 5 to 6: badges become Classic medals, task counts side medals, and the gyms start from Brock", () => {
+    herdr.state[G.GAME] = { version: 5, tasks: 600, badges: ["boulder", "cascade", "elite"] };
+    expect(G.migrateSave()).toBe(G.SAVE_VERSION);
+    const g = G.game();
+    expect(g).toMatchObject({ classic: ["boulder", "cascade", "elite"], badges: [], medals: ["tasks50", "tasks500"], gyms: null });
+    expect(G.gymView(g).gym).toMatchObject({ leader: "Brock", head: true });
+  });
+
   test("a version 1 save is upgraded to the current version with empty stats", () => {
     herdr.state[G.GAME] = { tasks: 3, xp: { p: 40 } };
     expect(G.migrateSave()).toBe(G.SAVE_VERSION);

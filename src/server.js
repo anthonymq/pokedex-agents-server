@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { STATE_DIR, writeJson, locked, shared, setShared, sharedFile, allShared, notes, asCaller } from "./store.js";
-import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, chooseStarter, setParty, setLead, claimGift, result, markSeen, rerollQuest, quests, liveStreak, liveWeek, GAME, CAUGHT, PARTNERS, PROJECTS, SAVE_VERSION, RULES_VERSION } from "./game.js";
+import { game, throwBall, runAway, useItem, recordCatches, finishTask, finishSubTask, unblocked, migrateProject, checkBadges, migrateSave, digest, setOption, defaultPartner, chooseStarter, setParty, setLead, claimGift, result, markSeen, rerollQuest, quests, liveStreak, liveWeek, gymView, GAME, CAUGHT, PARTNERS, PROJECTS, SAVE_VERSION, RULES_VERSION } from "./game.js";
 import { mergeSaves } from "./merge.js";
 import { projectId as pid, hashOnly, hashSave } from "./keys.js";
 import { shareText, intentUrl, renderCard, spriteDir, copyImage } from "./share.js";
@@ -143,11 +143,11 @@ const ACTIONS = {
 };
 
 // What the apps draw that the clock changes (today's quests, the live streak and, while it's 0, the
-// active days in the last 7 toward one), computed here so an
+// active days in the last 7 toward one, the open gym and the Elite Four's week), computed here so an
 // app never shows it from an older or newer copy of the rules; the versions let it warn about one.
 const view = () => {
   const g = game();
-  return { rules: RULES_VERSION, save: SAVE_VERSION, quests: quests(g), streak: liveStreak(g), week: liveWeek(g) };
+  return { rules: RULES_VERSION, save: SAVE_VERSION, quests: quests(g), streak: liveStreak(g), week: liveWeek(g), gym: gymView(g) };
 };
 const snapshot = () => ({ shared: allShared(), notes: notes(), view: view() });
 

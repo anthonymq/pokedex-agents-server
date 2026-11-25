@@ -77,7 +77,8 @@ It listens on `127.0.0.1:7151`, and only there.
 And on top of that:
 
 - **Quests sized to you.** Three daily and one weekly, with Bronze / Silver / Gold at 50% / 100% / 150% of *your own* median over the last two weeks. A quiet week asks less, a heavy one asks more, and every tier pays.
-- **Eight Kanto badges** (Boulder to Earth), then the Elite Four at 1,000 tasks and Champion with all eight.
+- **Eight gyms**, Brock to Giovanni, one open at a time. Each challenge is sized to your own median and has alternative ways to win, so one repo and one agent can beat them all. Then the **Elite Four**, one member a week, and **Champion** with your team in the Hall of Fame.
+- **Legendaries from milestones**, never the tall grass: a bird for three weekly quests in a row, Mewtwo for the Champion, Mew once the other 150 are caught. They wait until caught. 40% of wild Pokémon are species you don't have yet.
 - **Gifts** at trainer levels 5, 10, 15, 20 and 30: Eevee, Lapras, a fossil, a Hitmon, Porygon.
 - **Fair across repos.** One repo or ten, the day pays the same: turns 1-5 in full, 6-20 at 40%, 21-50 at 10%, then 3%.
 - **Shareable.** `POST /share` writes a post for X and puts a pixel-art trainer card on your clipboard. It shows Pokemon, levels and totals, never a project name.

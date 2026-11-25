@@ -131,12 +131,12 @@ test("a thrown ball plays the encounter on the server and returns the outcome", 
   expect(shared(CAUGHT)).toContain(143);
 });
 
-test("a merge awards the badges the joined progress has earned", async () => {
+test("a merge awards the medals the joined progress has earned", async () => {
   setShared(GAME, { tasks: 40, badges: [] });
   setShared("pokedex.merged", []);
   expect(await call("merge", "other", { [GAME]: { tasks: 20 } })).toEqual({ ok: true, value: "merged" });
   expect(shared(GAME).tasks).toBe(60);
-  expect(shared(GAME).badges).toContain("cascade");
+  expect(shared(GAME).medals).toContain("tasks50");
 });
 
 test("a fresh app's empty save (null keys) is recorded as merged, changing nothing", async () => {

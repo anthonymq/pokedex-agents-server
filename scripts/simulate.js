@@ -47,15 +47,15 @@ Math.random = rand;
 
 const G = await import("../src/game.js");
 
-// The roadmap's personas. `checks`: how many times a day they open the tall grass and throw at
+// The roadmap's personas. `branches`: how many branches each repo's turns go round. `checks`: how many times a day they open the tall grass and throw at
 // everything waiting (spread over the day; the last one at the end of it). `turnMin`: median turn length in minutes. `block`: share of turns where the agent
 // asks them something; `answerMin`: mean time to answer it. `commit`, `green`, `merged`: share of
 // turns that end with a commit, green tests/CI, a merged MR.
 export const PERSONAS = {
-  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, checks: 1, turnMin: 3, block: 0.3, answerMin: 15, commit: 0.3, green: 0.2, merged: 0.02 },
-  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, checks: 3, turnMin: 4, block: 0.3, answerMin: 4, commit: 0.3, green: 0.2, merged: 0.02 },
+  casual: { repos: 1, turns: 5, weekdays: [1, 3, 6], agents: 1, branches: 2, checks: 1, turnMin: 3, block: 0.3, answerMin: 15, commit: 0.3, green: 0.2, merged: 0.02 },
+  regular: { repos: 2, turns: 30, weekdays: [1, 2, 3, 4, 5], agents: 2, branches: 3, checks: 3, turnMin: 4, block: 0.3, answerMin: 4, commit: 0.3, green: 0.2, merged: 0.02 },
   // 5-6 active days a week: weekdays, plus every other Saturday.
-  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, checks: 4, turnMin: 5, block: 0.3, answerMin: 6, commit: 0.3, green: 0.2, merged: 0.02 },
+  pro: { repos: 10, turns: 150, weekdays: [1, 2, 3, 4, 5], altSaturday: true, agents: 3, branches: 3, checks: 4, turnMin: 5, block: 0.3, answerMin: 6, commit: 0.3, green: 0.2, merged: 0.02 },
 };
 // Default partners, as the clients pick them: one base form per repo.
 const BASES = [1, 4, 7, 25, 133, 10, 16, 92, 63, 66, 74, 129, 147, 60, 81];
@@ -102,7 +102,7 @@ export function simulate(persona, { days = 365, seed = 1, repos, start = "2027-0
         if (partners()[project] === undefined) mem.state[G.PARTNERS] = { ...partners(), [project]: G.defaultPartner(BASES[projects.indexOf(project) % BASES.length]) };
         const ms = turnMs(p.turnMin);
         if (rand() < p.block) G.unblocked(project, exp(p.answerMin) * 60000);
-        G.finishTask(project, partners()[project], ms, apps[t % apps.length]);
+        G.finishTask(project, partners()[project], ms, apps[t % apps.length], `b${Math.floor(t / projects.length) % p.branches}`);
         for (const kind of ["commit", "green", "merged"]) if (rand() < p[kind]) G.result(project, kind);
         for (const tr of G.game().gifts.pending) G.claimGift(tr, G.GIFTS.find((x) => x.tr === tr).ids[0]);
         // A new wild Pokemon interrupts only when the alert option allows it (agents are busy all day).
@@ -188,6 +188,8 @@ const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 // no sooner than day 60.
 // Phase 3: the casual player completes a quest on >= 80% of active days, the pro reaches Gold on
 // <= 40% of them; Rested XP brings the casual player's first evolution into week 1.
+// Phase 4: Champion in months 9-12 for the casual player and months 2-3 for the pro, and the pro's
+// full Kanto Dex in about 3 months (the casual player's needs Phase 5's Lures: see the roadmap).
 export function targets(runs, checks) {
   const by = Object.fromEntries(runs.map((r) => [r.name, r]));
   const rows = [
@@ -199,6 +201,9 @@ export function targets(runs, checks) {
     { key: "casual quest days", value: by.casual.perActiveDay.questDays, pass: by.casual.perActiveDay.questDays >= 0.8 },
     { key: "pro Gold days", value: by.pro.perActiveDay.goldDays, pass: by.pro.perActiveDay.goldDays <= 0.4 },
     { key: "casual first evolution (day)", value: by.casual.milestones.firstEvolution ?? -1, pass: by.casual.milestones.firstEvolution <= 7 },
+    { key: "casual Champion (day)", value: by.casual.milestones["badge:champion"] ?? -1, pass: by.casual.milestones["badge:champion"] >= 274 && by.casual.milestones["badge:champion"] <= 365 },
+    { key: "pro Champion (day)", value: by.pro.milestones["badge:champion"] ?? -1, pass: by.pro.milestones["badge:champion"] >= 61 && by.pro.milestones["badge:champion"] <= 92 },
+    { key: "pro full Kanto Dex (day)", value: by.pro.milestones.fullDex ?? -1, pass: by.pro.milestones.fullDex <= 106 },
   ];
   return { rows, pass: rows.every((r) => r.pass) };
 }
@@ -223,7 +228,7 @@ function report(runs, checks, targets) {
     lines.push(`  ${c.persona}, 1 vs ${c.repos} repos over ${c.days} days: ${c.pass ? "PASS" : "FAIL"}`);
     for (const r of c.rows) lines.push(`    ${r.key.padEnd(8)} ${String(r.one).padStart(7)} -> ${String(r.many).padStart(7)}  x${r.ratio.toFixed(2)} ${r.pass ? "ok" : "off"}`);
   }
-  lines.push(`\n== Targets (phases 1-3): ${targets.pass ? "PASS" : "FAIL"}`);
+  lines.push(`\n== Targets (phases 1-4): ${targets.pass ? "PASS" : "FAIL"}`);
   for (const r of targets.rows) lines.push(`    ${r.key.padEnd(34)} ${fmt(r.value)} ${r.pass ? "ok" : "off"}`);
   return lines.join("\n");
 }

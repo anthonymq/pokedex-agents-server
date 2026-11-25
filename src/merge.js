@@ -42,6 +42,8 @@ function mergeGame(a, b) {
     evolutions: (a.evolutions ?? 0) + (b.evolutions ?? 0),
     streak: { ...later, best: Math.max(sa.best ?? 0, sb.best ?? 0) },
     badges: union(a.badges, b.badges),
+    medals: union(a.medals, b.medals),
+    classic: union(a.classic, b.classic),
     shiny: union(a.shiny, b.shiny),
     encounter: null,
     wild: [],
