@@ -1,6 +1,6 @@
 {
   "name": "pokedex-agents-server",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "The Pokedex game for coding agents: rules, save and a local HTTP/WebSocket API shared by pokemon-rex and pokemon-herdr.",
   "type": "module",
   "private": true,
